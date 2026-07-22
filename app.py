@@ -48,9 +48,20 @@ st.sidebar.title("🌡️ Configuration")
 
 st.sidebar.header("1. Données")
 up_eau  = st.sidebar.file_uploader("Sonde thermique (eau) *", type=["csv"])
-up_air  = st.sidebar.file_uploader("Météo-France (air, TM/RR) *", type=["csv"])
-up_norm = st.sidebar.file_uploader("Normales 1991–2020 (EcartNormales) *",
-                                   type=["csv"])
+up_air  = st.sidebar.file_uploader(
+    "Air — station de référence (brut) *", type=["csv"],
+    help="Températures journalières brutes de la station Météo-France de "
+         "référence, couvrant au moins 1991–2020 (et idéalement les années "
+         "des mesures d'eau). L'app calcule elle-même les normales et les "
+         "écarts. Colonnes reconnues : AAAAMMJJ + TM (RR optionnel).")
+
+with st.sidebar.expander("📐 Calcul des normales (avancé)"):
+    norm_fenetre = st.slider("Lissage des normales (± jours)", 3, 20, 10, 1,
+                             help="Fenêtre glissante circulaire pour lisser la "
+                                  "normale de chaque jour calendaire.")
+    norm_min_ans = st.number_input("Années minimum sur 1991–2020", 5, 30, 20,
+                                   help="En deçà, un avertissement est émis "
+                                        "(normales moins fiables).")
 
 st.sidebar.header("2. Contexte & mode")
 contexte_key = st.sidebar.selectbox(
@@ -108,6 +119,44 @@ with st.sidebar.expander("🐟 Paramètres fraie (lecture)"):
 
 faire_clim = st.sidebar.checkbox("Inclure le volet climatique (bonus)", False)
 
+# --- Mapping manuel des colonnes (si auto-détection à corriger) ---
+eau_cd = eau_ct = air_cd = air_ct = None
+with st.sidebar.expander("🔧 Mapping colonnes (si détection erronée)"):
+    st.caption("Laisser sur « auto » sauf si le chargement échoue ou détecte "
+               "les mauvaises colonnes.")
+    if up_eau is not None:
+        try:
+            from thermie_debits.sniff import lire_brut, deviner_colonnes
+            _dfp, _meta = lire_brut(up_eau.getvalue())
+            _cd, _ct = deviner_colonnes(_dfp)
+            st.text(f"Sonde — sép. détecté : {_meta['separateur']!r}")
+            cols = ["auto"] + list(_dfp.columns)
+            sel_cd = st.selectbox("Sonde : colonne date",
+                                  cols, index=cols.index(_cd) if _cd in cols else 0)
+            sel_ct = st.selectbox("Sonde : colonne température",
+                                  cols, index=cols.index(_ct) if _ct in cols else 0)
+            eau_cd = None if sel_cd == "auto" else sel_cd
+            eau_ct = None if sel_ct == "auto" else sel_ct
+            st.dataframe(_dfp.head(3), use_container_width=True)
+        except Exception as e:
+            st.warning(f"Aperçu sonde indisponible : {e}")
+    if up_air is not None:
+        try:
+            from thermie_debits.sniff import lire_brut
+            _dfa, _metaa = lire_brut(up_air.getvalue())
+            st.text(f"Air — sép. détecté : {_metaa['separateur']!r}")
+            colsa = ["auto"] + list(_dfa.columns)
+            _adc = next((c for c in _dfa.columns if c.upper() == "AAAAMMJJ"), "auto")
+            _atc = next((c for c in _dfa.columns if c.upper() == "TM"), "auto")
+            sa_cd = st.selectbox("Air : colonne date", colsa,
+                                 index=colsa.index(_adc) if _adc in colsa else 0)
+            sa_ct = st.selectbox("Air : colonne température", colsa,
+                                 index=colsa.index(_atc) if _atc in colsa else 0)
+            air_cd = None if sa_cd == "auto" else sa_cd
+            air_ct = None if sa_ct == "auto" else sa_ct
+        except Exception as e:
+            st.warning(f"Aperçu air indisponible : {e}")
+
 lancer = st.sidebar.button("▶️  Lancer l'analyse", type="primary",
                            use_container_width=True)
 
@@ -120,8 +169,8 @@ st.caption("HMUC Moselle — approche thermique (note méthodologique Point 2)")
 
 # Validation des entrées requises
 def _inputs_ok():
-    if not (up_eau and up_air and up_norm):
-        return False, "Fournissez au minimum : sonde eau, air, normales."
+    if not (up_eau and up_air):
+        return False, "Fournissez au minimum : sonde eau et air (station de référence)."
     if mode == "thermie_debits" and not up_deb:
         return False, "Mode thermie+débits : fournissez le débit influencé "\
                       "(ou passez en mode thermie seule)."
@@ -137,13 +186,17 @@ if lancer:
     # Construire la config
     src = SourcesConfig(
         fichier_eau=_save_upload(up_eau), fichier_air=_save_upload(up_air),
-        fichier_normales=_save_upload(up_norm),
+        fichier_normales=None,   # calcul auto des normales depuis l'air brut
         fichier_debit=_save_upload(up_deb) if up_deb else None,
         fichier_debit_desinf=_save_upload(up_deb_des) if up_deb_des else None,
+        eau_col_date=eau_cd, eau_col_temp=eau_ct,
+        air_col_date=air_cd, air_col_temp=air_ct,
         nom_cours_eau=nom_ce, localisation_sonde=loc_sonde)
     cfg = AnalyseConfig(sources=src, qc=qc, contexte_piscicole=contexte_key,
                         mode=mode, faire_volet_climatique=faire_clim,
                         seuil_comblement_desinf=seuil_comblement,
+                        normales_fenetre_lissage=norm_fenetre,
+                        normales_min_annees=norm_min_ans,
                         output_dir=None)
 
     with st.spinner("Analyse en cours..."):
@@ -175,11 +228,19 @@ c2.metric("Composantes SGVT", f"{sg['composantes']}")
 c3.metric("Contexte", res.config.contexte_piscicole)
 c4.metric("Base débit", res.base_debit)
 
-# Avertissements (bascule débit, etc.)
+# Avertissements (bascule débit, normales, etc.)
 for av in res.avertissements:
     st.warning(av)
 if res.config.avec_debits:
     st.caption(f"ℹ️ {res.entete_base_debit}")
+# Traçabilité des normales
+dn = res.diag_normales
+if dn.get("n_annees_ref") is not None:
+    st.caption(f"📐 Normales 1991–2020 : {dn['n_annees_ref']} année(s), "
+               f"lissage ±{dn['fenetre_lissage']}j · air couvre "
+               f"{dn['periode_totale'][0]}–{dn['periode_totale'][1]}")
+elif dn.get("source"):
+    st.caption(f"📐 Normales : {dn['source']}")
 
 # --- Onglets ---
 noms_onglets = ["📊 Synthèse", "🧹 QC", "📈 Sensibilité", "🌡️ Vulnérabilité",

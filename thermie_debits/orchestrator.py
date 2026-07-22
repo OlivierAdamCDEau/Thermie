@@ -37,6 +37,7 @@ class Resultats:
     df: Any = None
     rapport_qc: Any = None
     diag_debit: dict = field(default_factory=dict)
+    diag_normales: dict = field(default_factory=dict)
     # résultats de calcul
     sensibilite: Any = None
     vulnerabilite: Any = None
@@ -69,10 +70,27 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
 
     # ---- 1. Chargement ----
     if verbose: print(f"\n{'='*60}\n  {nom} — {ctx['label']}\n  Mode : {config.mode}\n{'='*60}")
-    daily_eau = io.charger_eau(config.sources.fichier_eau)
-    df_air = io.charger_air(config.sources.fichier_air)
-    ecart, normales = io.charger_normales(config.sources.fichier_normales)
+    daily_eau = io.charger_eau(config.sources.fichier_eau,
+                               col_date=config.sources.eau_col_date,
+                               col_temp=config.sources.eau_col_temp)
     res.daily_eau_brut = daily_eau
+
+    # Air : nouvelle logique (fichier air brut → normales + écarts calculés),
+    # avec repli sur l'ancien EcartNormales pré-calculé si fourni (compat).
+    if config.sources.fichier_normales:
+        df_air = io.charger_air(config.sources.fichier_air)
+        ecart, normales = io.charger_normales(config.sources.fichier_normales)
+        res.diag_normales = dict(source="pré-calculé (EcartNormales)")
+    else:
+        df_air = io.charger_air_brut(config.sources.fichier_air,
+                                     col_date=config.sources.air_col_date,
+                                     col_temp=config.sources.air_col_temp)
+        ecart, normales, diag_norm = io.calculer_normales_ecarts(
+            df_air, fenetre_lissage=config.normales_fenetre_lissage,
+            min_annees=config.normales_min_annees, verbose=verbose)
+        res.diag_normales = diag_norm
+        for av in diag_norm.get("avertissements", []):
+            res.avertissements.append(av)
     res.df_air = df_air
 
     # ---- 2. Débits (selon mode) ----

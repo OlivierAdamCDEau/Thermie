@@ -20,10 +20,16 @@ from typing import Optional
 class SourcesConfig:
     """Chemins des fichiers d'entrée et métadonnées descriptives."""
     fichier_eau:          Optional[str] = None   # CSV sonde thermique
-    fichier_air:          Optional[str] = None   # CSV Météo-France (TM, RR)
-    fichier_normales:     Optional[str] = None   # EcartNormales.csv (1991–2020)
+    fichier_air:          Optional[str] = None   # CSV air brut (T° journalières)
+    fichier_normales:     Optional[str] = None   # (hérité) EcartNormales pré-calculé
     fichier_debit:        Optional[str] = None   # CSV Vigicrues/Hub'eau (influencé)
     fichier_debit_desinf: Optional[str] = None   # (optionnel) désinfluencé
+
+    # Mapping manuel optionnel (override auto-détection) — renseigné par l'app
+    eau_col_date:  Optional[str] = None
+    eau_col_temp:  Optional[str] = None
+    air_col_date:  Optional[str] = None
+    air_col_temp:  Optional[str] = None
 
     nom_cours_eau:      str = "Cours d'eau"
     localisation_sonde: str = ""
@@ -158,6 +164,9 @@ class AnalyseConfig:
     # Seuil d'écart relatif médian sous lequel on comble les trous du
     # désinfluencé par l'influencé ; au-dessus, bascule tout en influencé.
     seuil_comblement_desinf: float = 0.10        # 10 % (note : paramétrable)
+    # Calcul des normales à partir de l'air brut (note : évolution v2)
+    normales_fenetre_lissage: int = 10           # ±N jours (lissage circulaire)
+    normales_min_annees: int = 20                # seuil d'alerte sur 1991-2020
 
     def contexte(self) -> dict:
         if self.contexte_piscicole not in CONTEXTES:

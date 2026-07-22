@@ -31,8 +31,61 @@ def _parse_dates_sonde(serie):
     return best
 
 
-def charger_eau(fichier_eau):
-    """Charge une chronique de sonde thermique → daily (T_eau_moy, T_eau_max)."""
+def charger_eau(fichier_eau, col_date=None, col_temp=None):
+    """Charge une chronique de sonde thermique → daily (T_eau_moy, T_eau_max).
+
+    Détection robuste (séparateur, encodage, colonnes) via sniff. Les
+    paramètres col_date / col_temp permettent un override manuel (mapping app)
+    quand l'auto-détection échoue.
+    """
+    from .sniff import lire_brut, deviner_colonnes
+    df_w, _meta = lire_brut(fichier_eau)
+
+    # Colonnes : override manuel prioritaire, sinon auto-détection élargie
+    if col_temp is None:
+        _, col_temp = deviner_colonnes(df_w)
+    if col_date is None:
+        # colonne date+heure (privilégier une valeur longue, pas "heure seule")
+        cand = [c for c in df_w.columns
+                if any(m in c.lower() for m in
+                       ["date", "heure", "time", "timestamp", "horodat"])]
+        for dc in cand:
+            samp = str(df_w[dc].dropna().iloc[0]) if len(df_w[dc].dropna()) else ""
+            if len(samp) > 8:
+                col_date = dc; break
+        if col_date is None and cand:
+            col_date = cand[0]
+
+    if col_date is None or col_temp is None:
+        raise ValueError(
+            f"Colonnes sonde non détectées (date={col_date}, temp={col_temp}). "
+            f"Colonnes disponibles : {list(df_w.columns)}. "
+            f"Précisez le mapping manuellement.")
+
+    # Parsing date : gère une éventuelle colonne 'Heure' séparée
+    dt = _parse_dates_sonde(df_w[col_date])
+    col_h = next((c for c in df_w.columns if c.lower() == "heure"
+                  and c != col_date), None)
+    if col_h is not None and (dt.dt.hour == 0).all():
+        def _td(h):
+            try: return pd.Timedelta(str(h))
+            except Exception: return pd.Timedelta(0)
+        dt = dt + df_w[col_h].astype(str).apply(_td)
+
+    df_w["datetime"] = dt
+    df_w["T_eau"] = pd.to_numeric(
+        df_w[col_temp].astype(str).str.replace(",", "."), errors="coerce")
+    df_w["date"] = df_w["datetime"].dt.date
+    df_w = df_w.dropna(subset=["date", "T_eau"])
+    daily = df_w.groupby("date").agg(
+        T_eau_moy=("T_eau", "mean"),
+        T_eau_max=("T_eau", "max"),
+        n_mesures=("T_eau", "size")).reset_index()
+    return daily
+
+
+def charger_eau_legacy(fichier_eau):
+    """Ancienne version (conservée pour référence)."""
     df_w = pd.read_csv(fichier_eau, sep=";", encoding="utf-8-sig")
     df_w.columns = [c.lstrip("\ufeff").strip() for c in df_w.columns]
 
@@ -234,3 +287,148 @@ def fusionner_debits(fichier_influence, fichier_desinfluence=None,
 
     cols = ["date", "Q_inf", "Q_desinf", "Q"]
     return df[[c for c in cols if c in df.columns]].dropna(subset=["Q"]), diag
+
+
+# ============================================================
+# AIR — chargement brut flexible + calcul des normales/écarts
+# ============================================================
+from .sniff import lire_brut, deviner_colonnes, MOTS_DATE
+
+# Normales : période de référence standard (note §2.3)
+REF_NORMALES = (1991, 2020)
+
+
+def _parse_dates_air(serie):
+    """Parse dates air : gère AAAAMMJJ (YYYYMMDD), ISO, DD/MM/YYYY."""
+    s = serie.astype(str).str.strip()
+    # AAAAMMJJ pur (8 chiffres)
+    if s.str.match(r"^\d{8}$").mean() > 0.8:
+        return pd.to_datetime(s, format="%Y%m%d", errors="coerce")
+    best = None
+    for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%Y%m%d", "%d/%m/%Y %H:%M"]:
+        att = pd.to_datetime(s, format=fmt, errors="coerce")
+        if best is None or att.notna().sum() > best.notna().sum():
+            best = att
+    if best is None or best.notna().sum() == 0:
+        best = pd.to_datetime(s, format="mixed", dayfirst=True, errors="coerce")
+    return best
+
+
+def charger_air_brut(source, col_date=None, col_temp=None):
+    """
+    Charge un fichier air brut (T° journalières station de référence),
+    couvrant potentiellement une plage large. Auto-détecte séparateur,
+    encodage et colonnes (date, TM). Conserve RR si présent.
+
+    col_date / col_temp : override manuel (mapping app) ; sinon auto.
+    Retourne un DataFrame [date, T_air, (RR)].
+    """
+    df, meta = lire_brut(source)
+
+    # Colonne date : override, sinon 'AAAAMMJJ' explicite, sinon vocabulaire
+    if col_date is None:
+        col_date = next((c for c in df.columns if c.upper() == "AAAAMMJJ"), None)
+    if col_date is None:
+        col_date, _ = deviner_colonnes(df, mots_valeur=[])
+    # Colonne température : override, sinon 'TM' explicite, sinon vocabulaire air
+    if col_temp is None:
+        col_temp = next((c for c in df.columns if c.upper() == "TM"), None)
+    if col_temp is None:
+        _, col_temp = deviner_colonnes(
+            df, mots_valeur=["tm", "temp", "t_air", "tair", "°c", "degr", "valeur"])
+    if col_date is None or col_temp is None:
+        raise ValueError(
+            f"Colonnes air non détectées (date={col_date}, temp={col_temp}). "
+            f"Colonnes disponibles : {list(df.columns)}")
+
+    out = pd.DataFrame()
+    out["date"] = _parse_dates_air(df[col_date]).dt.date
+    out["T_air"] = pd.to_numeric(
+        df[col_temp].astype(str).str.replace(",", "."), errors="coerce")
+    # RR (précipitations) si présent
+    rr_col = next((c for c in df.columns if c.upper() == "RR"), None)
+    if rr_col:
+        out["RR"] = pd.to_numeric(
+            df[rr_col].astype(str).str.replace(",", "."), errors="coerce")
+    return out.dropna(subset=["date", "T_air"])
+
+
+def calculer_normales_ecarts(df_air, ref=REF_NORMALES, fenetre_lissage=10,
+                             min_annees=20, verbose=True):
+    """
+    À partir de l'air brut, calcule :
+      - la normale de chaque jour calendaire (moyenne LISSÉE sur ±fenetre_lissage
+        jours, sur les années de la période de référence `ref`) ;
+      - l'écart Delta_TMm = T_air − normale_du_jour, pour TOUS les jours observés
+        (y compris hors période de référence).
+
+    Retourne (ecart_by_date, normales_lkp, diag) où :
+      ecart_by_date : DataFrame [date, Delta_TMm]
+      normales_lkp  : DataFrame [day, month, T_normale]
+      diag          : dict (n_annees_ref, période couverte, avertissements…)
+    """
+    df = df_air.copy()
+    df["date_dt"] = pd.to_datetime(df["date"])
+    df["year"]  = df["date_dt"].dt.year
+    df["month"] = df["date_dt"].dt.month
+    df["day"]   = df["date_dt"].dt.day
+    # numéro de jour dans l'année (1..366), 29/02 géré
+    df["doy"]   = df["date_dt"].dt.dayofyear
+
+    y0, y1 = ref
+    ref_mask = (df["year"] >= y0) & (df["year"] <= y1)
+    df_ref = df[ref_mask]
+    annees_ref = sorted(df_ref["year"].unique().tolist())
+    n_annees = len(annees_ref)
+
+    diag = dict(ref=ref, n_annees_ref=n_annees, annees_ref=annees_ref,
+                fenetre_lissage=fenetre_lissage, min_annees=min_annees,
+                periode_totale=(int(df["year"].min()), int(df["year"].max())),
+                avertissements=[])
+
+    if n_annees == 0:
+        raise ValueError(
+            f"Aucune année de la période de référence {y0}-{y1} trouvée dans "
+            f"le fichier air (couvre {diag['periode_totale']}).")
+    if n_annees < min_annees:
+        msg = (f"Normales calculées sur {n_annees} année(s) seulement "
+               f"(< {min_annees} requis) sur {y0}-{y1}. Fiabilité réduite.")
+        diag["avertissements"].append(msg)
+        if verbose:
+            print(f"  ⚠️  {msg}")
+
+    # Moyenne brute par jour calendaire (doy) sur la période de référence
+    brute = df_ref.groupby("doy")["T_air"].mean()
+    # Réindexer sur 1..366 et lisser circulairement (fenêtre ±fenetre_lissage)
+    idx = pd.Series(index=range(1, 367), dtype=float)
+    idx.loc[brute.index] = brute.values
+    # interpolation des jours manquants (ex. 366 si peu d'années bissextiles)
+    idx = idx.interpolate(limit_direction="both")
+    # lissage circulaire : on triple la série pour gérer les bords (déc↔jan)
+    w = 2 * fenetre_lissage + 1
+    triple = pd.concat([idx, idx, idx], ignore_index=True)
+    liss = triple.rolling(window=w, center=True, min_periods=1).mean()
+    normale_doy = liss.iloc[366:366*2].reset_index(drop=True)
+    normale_doy.index = range(1, 367)
+
+    # Table normales par (day, month) pour la fusion aval
+    ref_dates = pd.to_datetime(
+        pd.Series(pd.date_range("2000-01-01", "2000-12-31")))  # année bissextile
+    lkp = pd.DataFrame({
+        "day": ref_dates.dt.day.values,
+        "month": ref_dates.dt.month.values,
+        "doy": ref_dates.dt.dayofyear.values})
+    lkp["T_normale"] = lkp["doy"].map(normale_doy)
+    normales_lkp = lkp[["day", "month", "T_normale"]]
+
+    # Écart pour tous les jours observés
+    df = df.merge(normales_lkp, on=["day", "month"], how="left")
+    df["Delta_TMm"] = df["T_air"] - df["T_normale"]
+    ecart_by_date = df[["date", "Delta_TMm"]].dropna()
+
+    if verbose:
+        print(f"  Normales 1991–2020 : {n_annees} ans, lissage ±{fenetre_lissage}j "
+              f"| écarts calculés sur {len(ecart_by_date)} jours "
+              f"({diag['periode_totale'][0]}–{diag['periode_totale'][1]})")
+
+    return ecart_by_date, normales_lkp, diag

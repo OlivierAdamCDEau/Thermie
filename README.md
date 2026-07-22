@@ -1,25 +1,24 @@
 # Thermie & Débits de référence — HMUC Moselle
 
 Outil d'analyse de la vulnérabilité thermique des cours d'eau et de calcul
-des débits de référence thermique, dans le cadre de l'étude HMUC du bassin
-Moselle (approche thermique — Point 2 de la note méthodologique).
+des débits de référence thermique (étude HMUC du bassin Moselle — approche
+thermique, Point 2 de la note méthodologique).
 
-Application web **Streamlit** reposant sur un package Python modulaire
+Application **Streamlit** reposant sur un package Python modulaire
 (`thermie_debits/`) séparant strictement le calcul de la présentation.
 
 ---
 
 ## Fonctionnalités
 
-- **Contrôle qualité** automatique des chroniques (sonde hors d'eau,
-  plateaux, valeurs aberrantes, outliers MAD) — paramétrable.
-- **Normalisation climatique** sur les normales 1991–2020.
-- **Sensibilité thermique** (couplage air–eau, indice de robustesse |ρ−r|).
-- **Vulnérabilité** chronique et aiguë, par zonation piscicole.
-- **Fraie-croissance** : composante dédiée aux stades précoces, par espèce
-  repère, avec gestion des chroniques lacunaires (mois central).
-- **SGVT** (Score Global de Vulnérabilité Thermique) à 4 composantes.
-- **Débits de référence** : Q_thermie_bio (principal) et Q_thermie_fonc.
+- **Chargement robuste** des chroniques de sonde : auto-détection du
+  séparateur, de l'encodage et des colonnes, avec mapping manuel corrigeable.
+- **Normales calculées automatiquement** depuis un fichier air brut : l'app
+  sélectionne les années 1991–2020, calcule la normale lissée de chaque jour
+  calendaire, puis les écarts pour toutes les années observées.
+- **Contrôle qualité** des chroniques (sonde hors d'eau, plateaux, MAD).
+- **Sensibilité**, **vulnérabilité** (chronique/aiguë), **fraie-croissance**,
+  **SGVT** (4 composantes), **débits de référence** (Q_thermie_bio / fonc).
 - **Volet climatique** descriptif (bonus).
 
 ## Deux modes
@@ -28,75 +27,65 @@ Application web **Streamlit** reposant sur un package Python modulaire
 
 ---
 
-## Installation locale
+## Installation & lancement
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-L'application s'ouvre sur http://localhost:8501. Des fichiers d'exemple sont
-fournis dans `examples/` pour tester immédiatement.
+Des fichiers d'exemple sont fournis dans `examples/` pour tester
+immédiatement (air brut 1991–2022, eau 2021–2022, débit).
 
-## Utilisation en ligne de commande (batch)
-
-```bash
-# éditer la CONFIG dans run_cli.py puis :
-python run_cli.py
-```
+En ligne de commande : éditer la CONFIG dans `run_cli.py` puis
+`python run_cli.py`.
 
 ---
 
-## Déploiement sur Streamlit Community Cloud
+## Données attendues (CSV)
 
-1. Pousser ce dépôt sur GitHub.
-2. Sur https://share.streamlit.io, « New app », sélectionner le dépôt.
-3. Fichier principal : `app.py`. Branche : `main`.
-4. Déployer. Les dépendances de `requirements.txt` sont installées
-   automatiquement.
+| Fichier | Contenu | Remarque |
+|---|---|---|
+| Sonde eau | Date (+heure) et température | séparateur/colonnes auto-détectés |
+| **Air (référence)** | T° journalières **brutes** (ex. `AAAAMMJJ`, `TM`, `RR`) | **un seul fichier**, couvrant ≥ 1991–2020 et idéalement les années des mesures d'eau |
+| Débit influencé | Vigicrues / Hub'eau | requis en mode thermie+débits |
+| Débit désinfluencé | (optionnel) | |
 
----
-
-## Structure
-
-```
-.
-├── app.py                  # interface Streamlit
-├── run_cli.py              # exécution en ligne de commande
-├── requirements.txt
-├── .streamlit/
-│   └── config.toml         # thème + taille max d'upload
-├── examples/               # jeux de données de démonstration
-│   ├── eau.csv  air.csv  EcartNormales.csv  debit.csv
-└── thermie_debits/         # package (cœur de calcul, sans I/O)
-    ├── config.py           # paramètres typés
-    ├── io_data.py          # loaders + fusion débits
-    ├── qc.py               # contrôle qualité
-    ├── core.py             # chaîne de calcul
-    ├── figures.py          # figures matplotlib
-    ├── exports.py          # exports CSV / XLSX
-    ├── climatique.py       # volet climatique bonus
-    └── orchestrator.py     # enchaînement → objet Resultats
-```
-
-## Données attendues (CSV, séparateur `;`)
-
-| Fichier | Contenu |
-|---|---|
-| Sonde eau | Date (+ heure) et température de l'eau |
-| Air (Météo-France) | Colonnes `AAAAMMJJ`, `TM` (et `RR` si disponible) |
-| Normales | `Date`, `Delta_TMm`, `TMm` (référence 1991–2020) |
-| Débit influencé | Vigicrues / Hub'eau (requis en mode thermie+débits) |
-| Débit désinfluencé | Optionnel |
+> **Normales** : plus besoin de fichier `EcartNormales` pré-calculé. L'app
+> établit les normales 1991–2020 et les écarts directement depuis l'air brut.
+> Le lissage (± jours) et le seuil d'années minimum sont réglables.
 
 ## Base de débit (influencé / désinfluencé)
 
 - Désinfluencé absent → base **influencée** (avertissement).
-- Désinfluencé présent, écart médian < seuil (10 % par défaut) → base
-  **désinfluencée**, trous comblés par l'influencé.
-- Écart ≥ seuil → bascule en base **influencée** (forte divergence =
-  fortes pressions anthropiques).
+- Écart médian < seuil (10 % par défaut) → base **désinfluencée**, trous
+  comblés par l'influencé.
+- Écart ≥ seuil → bascule en base **influencée** (forte divergence = fortes
+  pressions anthropiques).
 
 ---
 
-*Méthodologie : voir la note méthodologique HMUC (Point 2 — approche thermique).*
+## Déploiement Streamlit Community Cloud
+
+1. Pousser ce dépôt sur GitHub.
+2. Sur https://share.streamlit.io : « New app », sélectionner le dépôt,
+   fichier principal `app.py`, branche `main`.
+3. Déployer (les dépendances de `requirements.txt` s'installent seules).
+
+## Structure
+
+```
+app.py                     interface Streamlit
+run_cli.py                 exécution en ligne de commande
+requirements.txt
+.streamlit/config.toml     thème + upload élargi
+examples/                  jeux de données de démonstration
+thermie_debits/            package (cœur de calcul, sans I/O)
+├── config.py   io_data.py   sniff.py   qc.py
+├── core.py     figures.py   exports.py
+├── climatique.py           orchestrator.py
+```
+
+---
+
+*Méthodologie : note méthodologique HMUC (Point 2 — approche thermique).*

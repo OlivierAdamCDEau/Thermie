@@ -1,27 +1,17 @@
-# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
 venv/
 env/
-
-# Sorties d'analyse (générées localement)
 outputs/
 *.png
 *.xlsx
-!docs/**/*.png
-
-# Données locales (ne pas versionner les CSV de travail)
 *.csv
 !examples/*.csv
-
-# OS / éditeurs
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
 *.swp
-
-# Streamlit
 .streamlit/secrets.toml
