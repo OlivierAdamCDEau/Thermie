@@ -32,6 +32,40 @@ def _norm(s):
     return s
 
 
+def _detecter_separateur(lignes, n_test=40):
+    """
+    Détecte le séparateur d'un CSV par cohérence tabulaire, plutôt que par
+    l'heuristique fragile de csv.Sniffer (qui se fait piéger quand un
+    séparateur candidat apparaît dans un nom de colonne ou une valeur —
+    ex. en-tête « Date Heure, GMT +0200 » avec un vrai séparateur « ; »).
+
+    Pour chaque candidat, on découpe les lignes non vides et on retient
+    celui qui donne le plus grand nombre de colnnes RÉGULIER (même compte sur
+    la majorité des lignes) et > 1. À égalité de régularité, on privilégie
+    le séparateur produisant le plus de colonnes.
+    """
+    ech = [l for l in lignes[:n_test] if l.strip()]
+    if not ech:
+        return ";"
+    meilleur, meilleur_score = ";", (-1, -1)
+    for sep in SEPARATEURS:
+        comptes = [l.count(sep) + 1 for l in ech]  # nb de champs par ligne
+        if max(comptes) < 2:
+            continue  # ce séparateur ne découpe rien
+        # nombre de colonnes le plus fréquent (mode) et sa régularité
+        from collections import Counter
+        c = Counter(comptes)
+        ncol_mode, freq = c.most_common(1)[0]
+        if ncol_mode < 2:
+            continue
+        regularite = freq / len(comptes)        # part des lignes cohérentes
+        # score : d'abord la régularité, puis le nb de colonnes
+        score = (round(regularite, 3), ncol_mode)
+        if score > meilleur_score:
+            meilleur_score, meilleur = score, sep
+    return meilleur
+
+
 def est_excel(nom):
     """Détecte un fichier Excel d'après son extension."""
     n = str(nom).lower()
@@ -119,19 +153,8 @@ def lire_brut(source, nom="", n_lignes=None, feuille=None, ligne_entete=None):
     if texte is None:
         texte = raw.decode("utf-8", errors="replace"); enc_ok = "utf-8(replace)"
 
-    echantillon = "\n".join(texte.splitlines()[:30])
-    sep_ok = None
-    try:
-        sep_ok = csv.Sniffer().sniff(echantillon, delimiters=";,\t|").delimiter
-    except Exception:
-        pass
-    if sep_ok is None:
-        best = 0
-        for sep in SEPARATEURS:
-            n = echantillon.split("\n")[0].count(sep)
-            if n > best:
-                best, sep_ok = n, sep
-        sep_ok = sep_ok or ";"
+    lignes = texte.splitlines()
+    sep_ok = _detecter_separateur(lignes)
 
     # détection ligne d'en-tête pour CSV aussi (rare mais possible)
     brut = pd.read_csv(io.StringIO(texte), sep=sep_ok, engine="python", header=None)
