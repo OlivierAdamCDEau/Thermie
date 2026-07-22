@@ -1,17 +1,13 @@
 __pycache__/
 *.py[cod]
-*.egg-info/
 .venv/
 venv/
-env/
 outputs/
 *.png
 *.xlsx
 *.csv
 !examples/*.csv
 .DS_Store
-Thumbs.db
 .idea/
 .vscode/
-*.swp
 .streamlit/secrets.toml

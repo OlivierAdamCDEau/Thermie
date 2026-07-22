@@ -92,6 +92,14 @@ def fusionner(daily_eau_propre, df_air, ecart_by_date, normales_lkp,
 # ============================================================
 def analyse_sensibilite(df):
     df_ete = df[df["month"].isin([6, 7, 8, 9])].dropna(subset=["T_eau_moy", "T_air"])
+    if len(df_ete) < 10:
+        raise ValueError(
+            f"Données estivales (juin–sept.) insuffisantes pour la régression "
+            f"de sensibilité : {len(df_ete)} jour(s) valide(s) après contrôle "
+            f"qualité. Causes possibles : chronique trop courte, ou contrôle "
+            f"qualité ayant écarté l'été (ex. sonde diagnostiquée hors d'eau). "
+            f"Vérifiez les paramètres QC (seuil hors d'eau) ou la couverture "
+            f"estivale de la chronique.")
     x, y = df_ete["T_air"].values, df_ete["T_eau_moy"].values
 
     _, p_x = stats.shapiro(x)
@@ -593,3 +601,23 @@ def _pnda(q_all_series, q_val):
     s = q_all_series.dropna()
     if len(s) == 0: return None
     return (s <= q_val).mean() * 100
+
+
+# ============================================================
+# PNDA multi-base pour les débits de référence (sorties)
+# ============================================================
+def pnda_multi_base(valeur, q_influence=None, q_desinfluence=None):
+    """
+    Exprime UNE valeur de débit (m³/s, base de calcul retenue) via son PNDA
+    lu sur CHAQUE distribution disponible (influencée et/ou désinfluencée).
+    Le PNDA de chaque base se lit sur SA propre courbe de débits classés.
+
+    Retourne un dict : {valeur, pnda_desinf, pnda_inf} (None si base absente).
+    """
+    if valeur is None:
+        return dict(valeur=None, pnda_desinf=None, pnda_inf=None)
+    return dict(
+        valeur=valeur,
+        pnda_desinf=_pnda(q_desinfluence, valeur) if q_desinfluence is not None else None,
+        pnda_inf=_pnda(q_influence, valeur) if q_influence is not None else None,
+    )

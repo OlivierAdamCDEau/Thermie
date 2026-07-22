@@ -164,7 +164,6 @@ class AnalyseConfig:
     # Seuil d'écart relatif médian sous lequel on comble les trous du
     # désinfluencé par l'influencé ; au-dessus, bascule tout en influencé.
     seuil_comblement_desinf: float = 0.10        # 10 % (note : paramétrable)
-    # Calcul des normales à partir de l'air brut (note : évolution v2)
     normales_fenetre_lissage: int = 10           # ±N jours (lissage circulaire)
     normales_min_annees: int = 20                # seuil d'alerte sur 1991-2020
 

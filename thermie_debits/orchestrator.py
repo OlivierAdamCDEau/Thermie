@@ -45,6 +45,7 @@ class Resultats:
     sgvt: Any = None
     debits_inflexion: Any = None
     debits_reference: Any = None
+    debits_sorties: dict = field(default_factory=dict)
     df_q_all: Any = None
     # figures (objets matplotlib, clé -> Figure)
     figures: dict = field(default_factory=dict)
@@ -75,8 +76,8 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
                                col_temp=config.sources.eau_col_temp)
     res.daily_eau_brut = daily_eau
 
-    # Air : nouvelle logique (fichier air brut → normales + écarts calculés),
-    # avec repli sur l'ancien EcartNormales pré-calculé si fourni (compat).
+    # Air : nouvelle logique (air brut → normales + écarts calculés), avec
+    # repli sur l'ancien EcartNormales pré-calculé si fourni (compatibilité).
     if config.sources.fichier_normales:
         df_air = io.charger_air(config.sources.fichier_air)
         ecart, normales = io.charger_normales(config.sources.fichier_normales)
@@ -156,11 +157,30 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
                 sgvt["sgvt"], q_stat=dinf["q_aicc"], q_marquee=dinf["q_seuil"],
                 q_seuil_vuln=q_vuln, df=df)
             res.debits_reference = cst
-            # PNDA depuis la base de calcul
-            src = (config.sources.fichier_debit_desinf
-                   if (config.sources.fichier_debit_desinf and res.base_debit == "désinfluencé")
-                   else config.sources.fichier_debit)
-            res.df_q_all = io.charger_debit(src)
+
+            # Charger les DEUX distributions disponibles pour les PNDA
+            q_inf_series = q_des_series = None
+            if config.sources.fichier_debit:
+                q_inf_series = io.charger_debit(config.sources.fichier_debit)["Q"]
+            if config.sources.fichier_debit_desinf:
+                q_des_series = io.charger_debit(config.sources.fichier_debit_desinf)["Q"]
+            # df_q_all = distribution de la base de calcul (pour les figures)
+            res.df_q_all = io.charger_debit(
+                config.sources.fichier_debit_desinf
+                if (config.sources.fichier_debit_desinf and res.base_debit == "désinfluencé")
+                else config.sources.fichier_debit)
+
+            # Sorties : chaque débit de référence exprimé (valeur brute unique)
+            # avec son PNDA sur chaque courbe (désinfluencé prioritaire).
+            res.debits_sorties = dict(
+                base_calcul=res.base_debit,
+                desinfluence_disponible=(q_des_series is not None),
+                q_thermie_bio=core.pnda_multi_base(
+                    cst.get("q_thermie_bio"), q_inf_series, q_des_series),
+                q_thermie_fonc=core.pnda_multi_base(
+                    cst.get("q_thermie_fonc"), q_inf_series, q_des_series),
+            )
+
             F["debits_inflexion"] = figmod.fig_debits_inflexion(
                 dinf, sens, ctx, nom, out, q_fonc=cst["q_thermie_fonc"])
             F["debits_vuln"] = figmod.fig_vulnerabilite_debit(

@@ -41,11 +41,9 @@ def charger_eau(fichier_eau, col_date=None, col_temp=None):
     from .sniff import lire_brut, deviner_colonnes
     df_w, _meta = lire_brut(fichier_eau)
 
-    # Colonnes : override manuel prioritaire, sinon auto-détection élargie
     if col_temp is None:
         _, col_temp = deviner_colonnes(df_w)
     if col_date is None:
-        # colonne date+heure (privilégier une valeur longue, pas "heure seule")
         cand = [c for c in df_w.columns
                 if any(m in c.lower() for m in
                        ["date", "heure", "time", "timestamp", "horodat"])]
@@ -62,7 +60,6 @@ def charger_eau(fichier_eau, col_date=None, col_temp=None):
             f"Colonnes disponibles : {list(df_w.columns)}. "
             f"Précisez le mapping manuellement.")
 
-    # Parsing date : gère une éventuelle colonne 'Heure' séparée
     dt = _parse_dates_sonde(df_w[col_date])
     col_h = next((c for c in df_w.columns if c.lower() == "heure"
                   and c != col_date), None)
@@ -75,52 +72,6 @@ def charger_eau(fichier_eau, col_date=None, col_temp=None):
     df_w["datetime"] = dt
     df_w["T_eau"] = pd.to_numeric(
         df_w[col_temp].astype(str).str.replace(",", "."), errors="coerce")
-    df_w["date"] = df_w["datetime"].dt.date
-    df_w = df_w.dropna(subset=["date", "T_eau"])
-    daily = df_w.groupby("date").agg(
-        T_eau_moy=("T_eau", "mean"),
-        T_eau_max=("T_eau", "max"),
-        n_mesures=("T_eau", "size")).reset_index()
-    return daily
-
-
-def charger_eau_legacy(fichier_eau):
-    """Ancienne version (conservée pour référence)."""
-    df_w = pd.read_csv(fichier_eau, sep=";", encoding="utf-8-sig")
-    df_w.columns = [c.lstrip("\ufeff").strip() for c in df_w.columns]
-
-    date_cols = [c for c in df_w.columns if "date" in c.lower() or "heure" in c.lower()]
-    temp_col  = [c for c in df_w.columns if "temp" in c.lower()
-                 or "°c" in c.lower() or "degr" in c.lower()][0]
-
-    # Choisir la meilleure colonne date+heure (ignorer les colonnes "heure seule")
-    dt_parsed = None
-    for dc in date_cols:
-        samp = str(df_w[dc].dropna().iloc[0]) if len(df_w[dc].dropna()) else ""
-        if len(samp) <= 8:   # "14:59:10" = heure seule
-            continue
-        att = _parse_dates_sonde(df_w[dc])
-        if dt_parsed is None or att.notna().sum() > dt_parsed.notna().sum():
-            dt_parsed = att
-    # Cas colonnes séparées Date + Heure
-    if dt_parsed is None or dt_parsed.notna().sum() == 0:
-        col_d = next((c for c in df_w.columns if c.lower() == "date"), None)
-        col_h = next((c for c in df_w.columns if c.lower() == "heure"), None)
-        if col_d is not None:
-            dd = _parse_dates_sonde(df_w[col_d])
-            if col_h is not None:
-                def _td(h):
-                    try: return pd.Timedelta(str(h))
-                    except: return pd.Timedelta(0)
-                dd = dd + df_w[col_h].astype(str).apply(_td)
-            dt_parsed = dd
-    if dt_parsed is None:
-        dt_parsed = pd.to_datetime(df_w[date_cols[0]].astype(str),
-                                   format="mixed", dayfirst=True, errors="coerce")
-
-    df_w["datetime"] = dt_parsed
-    df_w["T_eau"] = pd.to_numeric(
-        df_w[temp_col].astype(str).str.replace(",", "."), errors="coerce")
     df_w["date"] = df_w["datetime"].dt.date
     df_w = df_w.dropna(subset=["date", "T_eau"])
     daily = df_w.groupby("date").agg(
@@ -292,16 +243,14 @@ def fusionner_debits(fichier_influence, fichier_desinfluence=None,
 # ============================================================
 # AIR — chargement brut flexible + calcul des normales/écarts
 # ============================================================
-from .sniff import lire_brut, deviner_colonnes, MOTS_DATE
+from .sniff import lire_brut, deviner_colonnes
 
-# Normales : période de référence standard (note §2.3)
 REF_NORMALES = (1991, 2020)
 
 
 def _parse_dates_air(serie):
     """Parse dates air : gère AAAAMMJJ (YYYYMMDD), ISO, DD/MM/YYYY."""
     s = serie.astype(str).str.strip()
-    # AAAAMMJJ pur (8 chiffres)
     if s.str.match(r"^\d{8}$").mean() > 0.8:
         return pd.to_datetime(s, format="%Y%m%d", errors="coerce")
     best = None
@@ -319,18 +268,13 @@ def charger_air_brut(source, col_date=None, col_temp=None):
     Charge un fichier air brut (T° journalières station de référence),
     couvrant potentiellement une plage large. Auto-détecte séparateur,
     encodage et colonnes (date, TM). Conserve RR si présent.
-
-    col_date / col_temp : override manuel (mapping app) ; sinon auto.
     Retourne un DataFrame [date, T_air, (RR)].
     """
     df, meta = lire_brut(source)
-
-    # Colonne date : override, sinon 'AAAAMMJJ' explicite, sinon vocabulaire
     if col_date is None:
         col_date = next((c for c in df.columns if c.upper() == "AAAAMMJJ"), None)
     if col_date is None:
         col_date, _ = deviner_colonnes(df, mots_valeur=[])
-    # Colonne température : override, sinon 'TM' explicite, sinon vocabulaire air
     if col_temp is None:
         col_temp = next((c for c in df.columns if c.upper() == "TM"), None)
     if col_temp is None:
@@ -345,7 +289,6 @@ def charger_air_brut(source, col_date=None, col_temp=None):
     out["date"] = _parse_dates_air(df[col_date]).dt.date
     out["T_air"] = pd.to_numeric(
         df[col_temp].astype(str).str.replace(",", "."), errors="coerce")
-    # RR (précipitations) si présent
     rr_col = next((c for c in df.columns if c.upper() == "RR"), None)
     if rr_col:
         out["RR"] = pd.to_numeric(
@@ -356,28 +299,20 @@ def charger_air_brut(source, col_date=None, col_temp=None):
 def calculer_normales_ecarts(df_air, ref=REF_NORMALES, fenetre_lissage=10,
                              min_annees=20, verbose=True):
     """
-    À partir de l'air brut, calcule :
-      - la normale de chaque jour calendaire (moyenne LISSÉE sur ±fenetre_lissage
-        jours, sur les années de la période de référence `ref`) ;
-      - l'écart Delta_TMm = T_air − normale_du_jour, pour TOUS les jours observés
-        (y compris hors période de référence).
-
-    Retourne (ecart_by_date, normales_lkp, diag) où :
-      ecart_by_date : DataFrame [date, Delta_TMm]
-      normales_lkp  : DataFrame [day, month, T_normale]
-      diag          : dict (n_annees_ref, période couverte, avertissements…)
+    À partir de l'air brut, calcule la normale lissée de chaque jour calendaire
+    (moyenne sur ±fenetre_lissage jours, années de `ref`) et l'écart
+    Delta_TMm = T_air − normale, pour TOUS les jours observés.
+    Retourne (ecart_by_date, normales_lkp, diag).
     """
     df = df_air.copy()
     df["date_dt"] = pd.to_datetime(df["date"])
     df["year"]  = df["date_dt"].dt.year
     df["month"] = df["date_dt"].dt.month
     df["day"]   = df["date_dt"].dt.day
-    # numéro de jour dans l'année (1..366), 29/02 géré
     df["doy"]   = df["date_dt"].dt.dayofyear
 
     y0, y1 = ref
-    ref_mask = (df["year"] >= y0) & (df["year"] <= y1)
-    df_ref = df[ref_mask]
+    df_ref = df[(df["year"] >= y0) & (df["year"] <= y1)]
     annees_ref = sorted(df_ref["year"].unique().tolist())
     n_annees = len(annees_ref)
 
@@ -397,23 +332,17 @@ def calculer_normales_ecarts(df_air, ref=REF_NORMALES, fenetre_lissage=10,
         if verbose:
             print(f"  ⚠️  {msg}")
 
-    # Moyenne brute par jour calendaire (doy) sur la période de référence
     brute = df_ref.groupby("doy")["T_air"].mean()
-    # Réindexer sur 1..366 et lisser circulairement (fenêtre ±fenetre_lissage)
     idx = pd.Series(index=range(1, 367), dtype=float)
     idx.loc[brute.index] = brute.values
-    # interpolation des jours manquants (ex. 366 si peu d'années bissextiles)
     idx = idx.interpolate(limit_direction="both")
-    # lissage circulaire : on triple la série pour gérer les bords (déc↔jan)
     w = 2 * fenetre_lissage + 1
     triple = pd.concat([idx, idx, idx], ignore_index=True)
     liss = triple.rolling(window=w, center=True, min_periods=1).mean()
     normale_doy = liss.iloc[366:366*2].reset_index(drop=True)
     normale_doy.index = range(1, 367)
 
-    # Table normales par (day, month) pour la fusion aval
-    ref_dates = pd.to_datetime(
-        pd.Series(pd.date_range("2000-01-01", "2000-12-31")))  # année bissextile
+    ref_dates = pd.to_datetime(pd.Series(pd.date_range("2000-01-01", "2000-12-31")))
     lkp = pd.DataFrame({
         "day": ref_dates.dt.day.values,
         "month": ref_dates.dt.month.values,
@@ -421,14 +350,13 @@ def calculer_normales_ecarts(df_air, ref=REF_NORMALES, fenetre_lissage=10,
     lkp["T_normale"] = lkp["doy"].map(normale_doy)
     normales_lkp = lkp[["day", "month", "T_normale"]]
 
-    # Écart pour tous les jours observés
     df = df.merge(normales_lkp, on=["day", "month"], how="left")
     df["Delta_TMm"] = df["T_air"] - df["T_normale"]
     ecart_by_date = df[["date", "Delta_TMm"]].dropna()
 
     if verbose:
         print(f"  Normales 1991–2020 : {n_annees} ans, lissage ±{fenetre_lissage}j "
-              f"| écarts calculés sur {len(ecart_by_date)} jours "
+              f"| écarts sur {len(ecart_by_date)} jours "
               f"({diag['periode_totale'][0]}–{diag['periode_totale'][1]})")
 
     return ecart_by_date, normales_lkp, diag
