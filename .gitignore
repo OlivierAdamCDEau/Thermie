@@ -5,6 +5,7 @@ venv/
 outputs/
 *.png
 *.xlsx
+!examples/*.xlsx
 *.csv
 !examples/*.csv
 .DS_Store

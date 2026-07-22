@@ -30,6 +30,13 @@ class SourcesConfig:
     eau_col_temp:  Optional[str] = None
     air_col_date:  Optional[str] = None
     air_col_temp:  Optional[str] = None
+    # Excel / en-tête décalé (renseignés par l'app selon le fichier)
+    eau_nom_fichier:  str = ""            # nom original (détection extension)
+    eau_feuille:      Optional[str] = None
+    eau_ligne_entete: Optional[int] = None
+    air_nom_fichier:  str = ""
+    air_feuille:      Optional[str] = None
+    air_ligne_entete: Optional[int] = None
 
     nom_cours_eau:      str = "Cours d'eau"
     localisation_sonde: str = ""

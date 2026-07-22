@@ -1,5 +1,4 @@
-"""run_cli.py — Point d'entrée ligne de commande (package thermie_debits).
-Éditer la CONFIG puis : python run_cli.py"""
+"""run_cli.py — Point d'entrée ligne de commande (package thermie_debits)."""
 from pathlib import Path
 from thermie_debits.config import AnalyseConfig, SourcesConfig, QCConfig
 from thermie_debits.orchestrator import run

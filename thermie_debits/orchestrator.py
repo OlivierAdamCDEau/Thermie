@@ -33,6 +33,8 @@ class Resultats:
     contexte: dict
     # données
     daily_eau_brut: Any = None
+    sub_eau: Any = None
+    indicateurs: Any = None
     df_air: Any = None
     df: Any = None
     rapport_qc: Any = None
@@ -71,10 +73,16 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
 
     # ---- 1. Chargement ----
     if verbose: print(f"\n{'='*60}\n  {nom} — {ctx['label']}\n  Mode : {config.mode}\n{'='*60}")
-    daily_eau = io.charger_eau(config.sources.fichier_eau,
-                               col_date=config.sources.eau_col_date,
-                               col_temp=config.sources.eau_col_temp)
+    daily_eau, sub_eau = io.charger_eau(
+        config.sources.fichier_eau,
+        col_date=config.sources.eau_col_date,
+        col_temp=config.sources.eau_col_temp,
+        nom=config.sources.eau_nom_fichier,
+        feuille=config.sources.eau_feuille,
+        ligne_entete=config.sources.eau_ligne_entete,
+        retour_sous_quotidien=True)
     res.daily_eau_brut = daily_eau
+    res.sub_eau = sub_eau
 
     # Air : nouvelle logique (air brut → normales + écarts calculés), avec
     # repli sur l'ancien EcartNormales pré-calculé si fourni (compatibilité).
@@ -145,6 +153,12 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
     if fraie:
         F["fraie"]     = figmod.fig_fraie_croissance(fraie, ctx, nom, out)
     F["synthese"]      = figmod.fig_synthese(sens, vul, sgvt, ctx, nom, out)
+
+    # ---- 6bis. Indicateurs bruts/compensés + corrélations ----
+    from . import indicateurs as indmod
+    res.indicateurs = indmod.calcul_indicateurs(df, sub_eau, verbose=verbose)
+    F["correlations"] = figmod.fig_correlations_indicateurs(
+        res.indicateurs["correlations"], nom, out)
 
     # ---- 7. Débits de référence (si mode + fichier) ----
     if config.avec_debits:

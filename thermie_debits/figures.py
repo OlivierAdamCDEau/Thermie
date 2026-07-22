@@ -29,6 +29,10 @@ def _finalise(fig, output_dir, filename):
 
 
 def fig_chronique(df, nom, output_dir):
+    from .core import inserer_lacunes
+    # Couper la courbe de T° eau (Tmh) aux lacunes de mesure pour ne pas
+    # relier des points de part et d'autre d'un trou (point 2 des retours).
+    df = inserer_lacunes(df, col_date="date_dt", cols_valeurs=["Tmh"], seuil_pas=3)
     fig, ax = plt.subplots(figsize=(15, 7))
     ax.set_facecolor("#f8f9fa")
     ax.fill_between(df["date_dt"], df["T_normale"], df["T_air"],
@@ -203,6 +207,11 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
     for i, s in enumerate(sous):
         ax = axes[i][0]; ax.set_facecolor("#f8f9fa")
         sub = s["sub"].sort_values("date_dt")
+        # Couper le tracé aux lacunes de mesure (évite les faux raccords sur
+        # de grandes plages sans données — point 2 des retours terrain).
+        from .core import inserer_lacunes
+        sub = inserer_lacunes(sub, col_date="date_dt",
+                              cols_valeurs=["Tmh_norm_fraie"], seuil_pas=3)
         opt_min, opt_max = s["opt"]; res = s["res"]
         limitant = (s["espece"] == fraie_res["espece_limitante"])
         # bande optimale
@@ -558,3 +567,40 @@ def fig_debits_classes(cst_res, debit_res, df_q_all, contexte, nom, output_dir, 
 # ============================================================
 # EXPORT XLSX — synthèse (mise en forme approfondie = phase 2)
 # ============================================================
+
+
+def fig_correlations_indicateurs(correlations, nom, output_dir):
+    """
+    Figure des 4 corrélations linéaires (amplitude/débit, amplitude/Teau,
+    écart Teau-Tair/débit, écart Teau-Tair/Teau) avec droite de régression
+    et R². Ne trace que les corrélations exploitables (n ≥ 5).
+    """
+    dispo = [(k, c) for k, c in correlations.items() if c.get("n", 0) >= 5]
+    if not dispo:
+        return None
+    n = len(dispo)
+    ncols = 2
+    nrows = (n + 1) // 2
+    fig, axes = plt.subplots(nrows, ncols, figsize=(13, 4.6 * nrows), squeeze=False)
+    fig.patch.set_facecolor("white")
+    couleurs = {"ampl_vs_debit": "#2471A3", "ampl_vs_teau": "#1E8449",
+                "ecart_vs_debit": "#B9770D", "ecart_vs_teau": "#7D3C98"}
+    for i, (k, c) in enumerate(dispo):
+        ax = axes[i // ncols][i % ncols]
+        ax.set_facecolor("#f8f9fa")
+        col = couleurs.get(k, "#333333")
+        x, y = np.asarray(c["x"]), np.asarray(c["y"])
+        ax.scatter(x, y, s=14, alpha=0.45, color=col, edgecolors="none", zorder=2)
+        xs = np.linspace(x.min(), x.max(), 100)
+        ax.plot(xs, c["pente"] * xs + c["ordonnee"], color=col, lw=2, zorder=3)
+        ax.set_xlabel(c["xlabel"], fontsize=10)
+        ax.set_ylabel(c["ylabel"], fontsize=10)
+        ax.set_title(f"R² = {c['r2']:.3f}  |  pente = {c['pente']:.3f}  (n={c['n']})",
+                     fontsize=10, fontweight="bold", color=col)
+        ax.grid(True, alpha=0.3)
+    for j in range(n, nrows * ncols):
+        axes[j // ncols][j % ncols].axis("off")
+    plt.suptitle(f"{nom} — Corrélations des indicateurs thermiques",
+                 fontsize=13, fontweight="bold", y=1.005)
+    plt.tight_layout()
+    return _finalise(fig, output_dir, "Fig_Correlations_Indicateurs.png")

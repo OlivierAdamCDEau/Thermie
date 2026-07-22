@@ -4,16 +4,22 @@ Outil d'analyse de la vulnérabilité thermique des cours d'eau et de calcul
 des débits de référence thermique (étude HMUC du bassin Moselle — approche
 thermique, Point 2 de la note méthodologique).
 
-Application **Streamlit** reposant sur un package Python modulaire
-(`thermie_debits/`).
+Application **Streamlit** reposant sur un package Python modulaire.
 
 ## Fonctionnalités
-- Chargement robuste des sondes (auto-détection séparateur/encodage/colonnes,
-  mapping manuel corrigeable).
-- Normales 1991–2020 calculées automatiquement depuis un fichier air brut
-  (sélection des années, normale journalière lissée, écarts).
-- Contrôle qualité, sensibilité, vulnérabilité, fraie-croissance, SGVT,
-  débits de référence, volet climatique (bonus).
+- **Formats d'entrée souples** : CSV (séparateur/encodage auto-détectés) et
+  Excel `.xls`/`.xlsx` (choix de la feuille, détection de l'en-tête décalé,
+  date+heure séparées), avec mapping manuel corrigeable.
+- **Normales 1991–2020** calculées automatiquement depuis un fichier air brut.
+- **Contrôle qualité**, sensibilité, vulnérabilité, fraie-croissance, SGVT,
+  débits de référence.
+- **Onglet Indicateurs** : Tmax/Tmin (mensuels + annuels, avec dates),
+  amplitude nycthémérale (moy ± σ), Tmm30j — bruts et compensés — plus quatre
+  corrélations linéaires (amplitude/débit, amplitude/T°eau, écart T°eau−T°air
+  /débit, écart/T°eau) avec R².
+- **Coupure des lacunes** : les tracés ne relient plus les points de part et
+  d'autre d'un trou de mesure (détection auto du pas d'échantillonnage).
+- **Volet climatique** descriptif (bonus).
 
 ## Deux modes
 - **Thermie seule** : caractérisation thermique + SGVT, sans débit.
@@ -21,36 +27,34 @@ Application **Streamlit** reposant sur un package Python modulaire
 
 ## Sorties débits
 Chaque débit de référence (Q_thermie_bio prépondérant, Q_thermie_fonc en
-complément) est exprimé par **une valeur brute** (base de calcul retenue) et
-son **PNDA** lu sur chaque distribution : désinfluencé prioritaire, influencé
-en information secondaire. Si le désinfluencé n'est pas fourni, l'influencé
-devient la référence par défaut.
+complément) : **une valeur brute** (base de calcul retenue) et son **PNDA** lu
+sur chaque distribution — désinfluencé prioritaire, influencé en secondaire.
 
 ## Installation & lancement
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
-Exemples fournis dans `examples/` (dont un débit désinfluencé) pour tester
-immédiatement. En CLI : éditer `run_cli.py` puis `python run_cli.py`.
+Exemples dans `examples/` (dont un fichier Excel de démonstration). En CLI :
+éditer `run_cli.py` puis `python run_cli.py`.
 
-## Données attendues (CSV)
-| Fichier | Contenu | Remarque |
+## Données attendues
+| Fichier | Contenu | Formats |
 |---|---|---|
-| Sonde eau | Date (+heure) et température | séparateur/colonnes auto-détectés |
-| Air (référence) | T° journalières **brutes** (`AAAAMMJJ`, `TM`, `RR`) | un seul fichier ≥ 1991–2020 |
-| Débit influencé | Vigicrues / Hub'eau | requis en mode thermie+débits |
-| Débit désinfluencé | (optionnel) | active la double expression PNDA |
+| Sonde eau | Date (+heure) et température | CSV, xls, xlsx |
+| Air (référence) | T° journalières brutes (`AAAAMMJJ`, `TM`, `RR`) | CSV, xls, xlsx |
+| Débit influencé | Vigicrues / Hub'eau | CSV |
+| Débit désinfluencé | (optionnel) | CSV |
 
 ## Déploiement Streamlit Cloud
-Pousser sur GitHub → https://share.streamlit.io → New app → fichier `app.py`,
-branche `main`. Les dépendances s'installent depuis `requirements.txt`.
+Pousser sur GitHub → https://share.streamlit.io → fichier `app.py`, branche
+`main`. Dépendances installées depuis `requirements.txt` (dont `xlrd` pour .xls).
 
 ## Structure
 ```
-app.py  run_cli.py  requirements.txt  .streamlit/config.toml  examples/
+app.py  run_cli.py  requirements.txt  .streamlit/  examples/
 thermie_debits/
-├── config.py  io_data.py  sniff.py  qc.py
+├── config.py  io_data.py  sniff.py  qc.py  indicateurs.py
 ├── core.py    figures.py  exports.py
 ├── climatique.py          orchestrator.py
 ```

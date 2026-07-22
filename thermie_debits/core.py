@@ -621,3 +621,79 @@ def pnda_multi_base(valeur, q_influence=None, q_desinfluence=None):
         pnda_desinf=_pnda(q_desinfluence, valeur) if q_desinfluence is not None else None,
         pnda_inf=_pnda(q_influence, valeur) if q_influence is not None else None,
     )
+
+
+# ============================================================
+# DÉTECTION DES LACUNES TEMPORELLES (trous de mesure)
+# ============================================================
+def detecter_pas(dates, verbose=False):
+    """
+    Détecte le pas d'échantillonnage médian d'une série de dates.
+    Retourne un Timedelta (ex. 1 jour, 4h). Robuste aux valeurs isolées.
+    """
+    d = pd.to_datetime(pd.Series(dates)).sort_values().drop_duplicates()
+    if len(d) < 3:
+        return pd.Timedelta(days=1)
+    deltas = d.diff().dropna()
+    pas = deltas.median()
+    if verbose:
+        print(f"  Pas d'échantillonnage médian : {pas}")
+    return pas
+
+
+def inserer_lacunes(df, col_date="date_dt", cols_valeurs=None,
+                    seuil_pas=3, pas=None):
+    """
+    Insère des lignes NaN aux emplacements de lacune pour que les tracés ne
+    relient pas les points de part et d'autre d'un trou (note : point 2).
+
+    Un trou est une interruption > seuil_pas × pas médian. Retourne une copie
+    du df triée, avec des lignes NaN insérées au milieu de chaque lacune.
+    cols_valeurs : colonnes à mettre à NaN (défaut : toutes sauf la date).
+    """
+    df = df.sort_values(col_date).reset_index(drop=True).copy()
+    if len(df) < 3:
+        return df
+    if pas is None:
+        pas = detecter_pas(df[col_date])
+    seuil = seuil_pas * pas
+    if cols_valeurs is None:
+        cols_valeurs = [c for c in df.columns if c != col_date]
+
+    dts = pd.to_datetime(df[col_date])
+    trous = dts.diff() > seuil
+    idx_trous = df.index[trous].tolist()
+    if not idx_trous:
+        return df
+
+    lignes_nan = []
+    for i in idx_trous:
+        t0 = dts.iloc[i - 1]; t1 = dts.iloc[i]
+        milieu = t0 + (t1 - t0) / 2
+        ligne = {c: np.nan for c in df.columns}
+        ligne[col_date] = milieu
+        lignes_nan.append(ligne)
+    df_nan = pd.DataFrame(lignes_nan)
+    out = pd.concat([df, df_nan], ignore_index=True).sort_values(col_date)
+    return out.reset_index(drop=True)
+
+
+def segments_valides(dates, valeurs, seuil_pas=3, pas=None):
+    """
+    Découpe une série en segments continus (sans lacune > seuil_pas × pas).
+    Retourne une liste de (dates_seg, valeurs_seg) pour tracer chaque segment
+    séparément — alternative à inserer_lacunes pour les tracés fins.
+    """
+    d = pd.to_datetime(pd.Series(dates)).reset_index(drop=True)
+    v = pd.Series(valeurs).reset_index(drop=True)
+    if len(d) < 2:
+        return [(d, v)]
+    if pas is None:
+        pas = detecter_pas(d)
+    seuil = seuil_pas * pas
+    coupures = d.diff() > seuil
+    seg_id = coupures.cumsum()
+    segments = []
+    for _, grp in pd.DataFrame({"d": d, "v": v, "s": seg_id}).groupby("s"):
+        segments.append((grp["d"].values, grp["v"].values))
+    return segments

@@ -18,9 +18,11 @@ st.set_page_config(page_title="Thermie & Débits — HMUC Moselle",
                    page_icon="🌡️", layout="wide")
 
 
-def _save_upload(uploaded, suffix=".csv"):
+def _save_upload(uploaded):
     if uploaded is None:
         return None
+    import os
+    suffix = os.path.splitext(uploaded.name)[1] or ".csv"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp.write(uploaded.getvalue()); tmp.close()
     return tmp.name
@@ -39,9 +41,9 @@ def _fig_download(fig, label, filename):
 st.sidebar.title("🌡️ Configuration")
 
 st.sidebar.header("1. Données")
-up_eau = st.sidebar.file_uploader("Sonde thermique (eau) *", type=["csv"])
+up_eau = st.sidebar.file_uploader("Sonde thermique (eau) *", type=["csv", "xls", "xlsx"])
 up_air = st.sidebar.file_uploader(
-    "Air — station de référence (brut) *", type=["csv"],
+    "Air — station de référence (brut) *", type=["csv", "xls", "xlsx"],
     help="Températures journalières brutes de la station Météo-France de "
          "référence, couvrant au moins 1991–2020 (et idéalement les années "
          "des mesures d'eau). L'app calcule elle-même normales et écarts. "
@@ -103,39 +105,58 @@ with st.sidebar.expander("🐟 Paramètres fraie (lecture)"):
 
 faire_clim = st.sidebar.checkbox("Inclure le volet climatique (bonus)", False)
 
-# --- Mapping manuel colonnes ---
+# --- Mapping manuel colonnes / feuille Excel ---
 eau_cd = eau_ct = air_cd = air_ct = None
-with st.sidebar.expander("🔧 Mapping colonnes (si détection erronée)"):
-    st.caption("Laisser sur « auto » sauf si le chargement échoue ou détecte "
-               "les mauvaises colonnes.")
+eau_feuille = air_feuille = None
+eau_ligne_ent = air_ligne_ent = None
+with st.sidebar.expander("🔧 Format & colonnes (CSV / Excel)"):
+    st.caption("Auto-détection du séparateur, de l'encodage, de la feuille "
+               "Excel et de la ligne d'en-tête. Corriger ici si besoin.")
+    from thermie_debits.sniff import lire_brut, deviner_colonnes, lister_feuilles, est_excel
+
     if up_eau is not None:
         try:
-            from thermie_debits.sniff import lire_brut, deviner_colonnes
-            _dfp, _meta = lire_brut(up_eau.getvalue())
+            st.markdown("**Sonde (eau)**")
+            _feuilles = lister_feuilles(up_eau.getvalue(), up_eau.name)
+            if _feuilles:
+                eau_feuille = st.selectbox("Feuille Excel (sonde)", _feuilles, key="eauf")
+            _dfp, _meta = lire_brut(up_eau.getvalue(), nom=up_eau.name, feuille=eau_feuille)
+            fmt = _meta.get("format")
+            info = (f"CSV — sép. {_meta.get('separateur')!r}, enc. {_meta.get('encodage')}"
+                    if fmt == "csv" else f"Excel — feuille « {_meta.get('feuille')} »")
+            st.caption(f"{info} · en-tête détecté ligne {_meta.get('ligne_entete')}")
+            eau_ligne_ent = st.number_input("Ligne d'en-tête (sonde)", 0, 30,
+                                            int(_meta.get("ligne_entete", 0)), key="eaul")
+            if eau_ligne_ent != _meta.get("ligne_entete"):
+                _dfp, _meta = lire_brut(up_eau.getvalue(), nom=up_eau.name,
+                                        feuille=eau_feuille, ligne_entete=eau_ligne_ent)
             _cd, _ct = deviner_colonnes(_dfp)
-            st.text(f"Sonde — séparateur détecté : {_meta['separateur']!r}")
             cols = ["auto"] + list(_dfp.columns)
-            s1 = st.selectbox("Sonde : colonne date", cols,
-                              index=cols.index(_cd) if _cd in cols else 0)
-            s2 = st.selectbox("Sonde : colonne température", cols,
-                              index=cols.index(_ct) if _ct in cols else 0)
+            s1 = st.selectbox("Colonne date", cols,
+                              index=cols.index(_cd) if _cd in cols else 0, key="eaucd")
+            s2 = st.selectbox("Colonne température", cols,
+                              index=cols.index(_ct) if _ct in cols else 0, key="eauct")
             eau_cd = None if s1 == "auto" else s1
             eau_ct = None if s2 == "auto" else s2
             st.dataframe(_dfp.head(3), use_container_width=True)
         except Exception as e:
             st.warning(f"Aperçu sonde indisponible : {e}")
+
     if up_air is not None:
         try:
-            from thermie_debits.sniff import lire_brut
-            _dfa, _ma = lire_brut(up_air.getvalue())
-            st.text(f"Air — séparateur détecté : {_ma['separateur']!r}")
+            st.markdown("**Air (référence)**")
+            _feuillesa = lister_feuilles(up_air.getvalue(), up_air.name)
+            if _feuillesa:
+                air_feuille = st.selectbox("Feuille Excel (air)", _feuillesa, key="airf")
+            _dfa, _ma = lire_brut(up_air.getvalue(), nom=up_air.name, feuille=air_feuille)
+            air_ligne_ent = int(_ma.get("ligne_entete", 0))
             colsa = ["auto"] + list(_dfa.columns)
             _adc = next((c for c in _dfa.columns if c.upper() == "AAAAMMJJ"), "auto")
             _atc = next((c for c in _dfa.columns if c.upper() == "TM"), "auto")
-            a1 = st.selectbox("Air : colonne date", colsa,
-                              index=colsa.index(_adc) if _adc in colsa else 0)
-            a2 = st.selectbox("Air : colonne température", colsa,
-                              index=colsa.index(_atc) if _atc in colsa else 0)
+            a1 = st.selectbox("Colonne date (air)", colsa,
+                              index=colsa.index(_adc) if _adc in colsa else 0, key="aircd")
+            a2 = st.selectbox("Colonne température (air)", colsa,
+                              index=colsa.index(_atc) if _atc in colsa else 0, key="airct")
             air_cd = None if a1 == "auto" else a1
             air_ct = None if a2 == "auto" else a2
         except Exception as e:
@@ -172,6 +193,10 @@ if lancer:
         fichier_debit_desinf=_save_upload(up_deb_des) if up_deb_des else None,
         eau_col_date=eau_cd, eau_col_temp=eau_ct,
         air_col_date=air_cd, air_col_temp=air_ct,
+        eau_nom_fichier=up_eau.name if up_eau else "",
+        eau_feuille=eau_feuille, eau_ligne_entete=eau_ligne_ent,
+        air_nom_fichier=up_air.name if up_air else "",
+        air_feuille=air_feuille, air_ligne_entete=air_ligne_ent,
         nom_cours_eau=nom_ce, localisation_sonde=loc_sonde,
         nom_station_debit=nom_station)
     cfg = AnalyseConfig(sources=src, qc=qc, contexte_piscicole=contexte_key,
@@ -217,7 +242,8 @@ elif dn.get("source"):
     st.caption(f"📐 Normales : {dn['source']}")
 
 # --- Onglets ---
-noms = ["📊 Synthèse", "🧹 QC", "📈 Sensibilité", "🌡️ Vulnérabilité", "🐟 Fraie"]
+noms = ["📊 Synthèse", "🧹 QC", "📈 Sensibilité", "🌡️ Vulnérabilité", "🐟 Fraie",
+        "📉 Indicateurs"]
 if res.config.avec_debits:
     noms.append("💧 Débits")
 if res.figures_climatiques:
@@ -286,6 +312,38 @@ with ong[4]:
         st.dataframe(rows, use_container_width=True)
     if res.figures.get("fraie") is not None:
         st.pyplot(res.figures["fraie"])
+
+# Indicateurs
+if "📉 Indicateurs" in noms and res.indicateurs is not None:
+    with ong[noms.index("📉 Indicateurs")]:
+        st.subheader("Indicateurs thermiques — bruts et compensés")
+        st.caption("Compensé = ramené aux conditions normales (écart aux "
+                   "normales 1991–2020 retiré). Amplitude nycthémérale = "
+                   "écart Tmax−Tmin journalier (variation jour/nuit).")
+        table = res.indicateurs["table_mensuelle"]
+        st.dataframe(table, use_container_width=True, height=380)
+        st.download_button(
+            "⬇️ Indicateurs (CSV)",
+            table.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+            "indicateurs_thermiques.csv", "text/csv")
+
+        st.subheader("Corrélations")
+        cors = res.indicateurs["correlations"]
+        n_ok = len([c for c in cors.values() if c.get("n", 0) >= 5])
+        if n_ok == 0:
+            st.info("Corrélations indisponibles (données insuffisantes ou "
+                    "débit/air manquant).")
+        else:
+            if res.figures.get("correlations") is not None:
+                st.pyplot(res.figures["correlations"])
+                _fig_download(res.figures["correlations"],
+                              "⬇️ PNG corrélations", "Correlations.png")
+            # Récapitulatif chiffré des R²
+            recap = [{"Corrélation": c["ylabel"] + " ~ " + c["xlabel"],
+                      "R²": round(c["r2"], 3), "Pente": round(c["pente"], 3),
+                      "n": c["n"]}
+                     for c in cors.values() if c.get("n", 0) >= 5]
+            st.dataframe(recap, use_container_width=True)
 
 # Débits
 if res.config.avec_debits and "💧 Débits" in noms:

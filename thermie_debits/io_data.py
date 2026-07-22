@@ -31,15 +31,23 @@ def _parse_dates_sonde(serie):
     return best
 
 
-def charger_eau(fichier_eau, col_date=None, col_temp=None):
-    """Charge une chronique de sonde thermique → daily (T_eau_moy, T_eau_max).
+def charger_eau(fichier_eau, col_date=None, col_temp=None, nom="",
+                feuille=None, ligne_entete=None, retour_sous_quotidien=False):
+    """Charge une chronique de sonde thermique → daily (T_eau_moy/max/min).
 
-    Détection robuste (séparateur, encodage, colonnes) via sniff. Les
-    paramètres col_date / col_temp permettent un override manuel (mapping app)
-    quand l'auto-détection échoue.
+    Détection robuste (CSV/Excel, séparateur, encodage, colonnes, en-tête
+    décalé) via sniff. Les paramètres col_date / col_temp / feuille /
+    ligne_entete permettent un override manuel (mapping app).
+
+    Si retour_sous_quotidien=True, retourne (daily, sub) où `sub` conserve les
+    mesures infra-journalières (datetime, T_eau) — utile pour l'amplitude
+    nycthémérale et les indicateurs.
     """
     from .sniff import lire_brut, deviner_colonnes
-    df_w, _meta = lire_brut(fichier_eau)
+    if not nom and isinstance(fichier_eau, str):
+        nom = fichier_eau
+    df_w, _meta = lire_brut(fichier_eau, nom=nom, feuille=feuille,
+                            ligne_entete=ligne_entete)
 
     if col_temp is None:
         _, col_temp = deviner_colonnes(df_w)
@@ -61,23 +69,35 @@ def charger_eau(fichier_eau, col_date=None, col_temp=None):
             f"Précisez le mapping manuellement.")
 
     dt = _parse_dates_sonde(df_w[col_date])
-    col_h = next((c for c in df_w.columns if c.lower() == "heure"
-                  and c != col_date), None)
-    if col_h is not None and (dt.dt.hour == 0).all():
+    # Colonne heure séparée : tout nom commençant par 'heure' (ex. 'Heure, GMT+02:00')
+    col_h = next((c for c in df_w.columns
+                  if c.lower().startswith("heure") and c != col_date), None)
+    if col_h is not None and dt.notna().any() and (dt.dt.hour == 0).all():
         def _td(h):
-            try: return pd.Timedelta(str(h))
-            except Exception: return pd.Timedelta(0)
-        dt = dt + df_w[col_h].astype(str).apply(_td)
+            try:
+                h = str(h).strip()
+                return pd.Timedelta(h) if ":" in h else pd.Timedelta(0)
+            except Exception:
+                return pd.Timedelta(0)
+        dt = dt + df_w[col_h].apply(_td)
 
+    df_w = df_w.copy()
     df_w["datetime"] = dt
     df_w["T_eau"] = pd.to_numeric(
-        df_w[col_temp].astype(str).str.replace(",", "."), errors="coerce")
+        df_w[col_temp].astype(str).str.replace(",", ".").str.replace(" ", ""),
+        errors="coerce")
     df_w["date"] = df_w["datetime"].dt.date
     df_w = df_w.dropna(subset=["date", "T_eau"])
+
     daily = df_w.groupby("date").agg(
         T_eau_moy=("T_eau", "mean"),
         T_eau_max=("T_eau", "max"),
+        T_eau_min=("T_eau", "min"),
         n_mesures=("T_eau", "size")).reset_index()
+
+    if retour_sous_quotidien:
+        sub = df_w[["datetime", "date", "T_eau"]].dropna(subset=["datetime"]).copy()
+        return daily, sub
     return daily
 
 
