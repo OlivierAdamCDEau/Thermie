@@ -269,6 +269,26 @@ if res.figures_climatiques:
 ong = st.tabs(noms)
 
 with ong[0]:
+    # --- Cadre de lecture : que permet de conclure l'approche thermique ? ---
+    mat = getattr(res, "matrice", None)
+    if mat:
+        st.subheader("Que permet de conclure l'approche thermique ?")
+        boite = {1: st.error, 2: st.warning, 3: st.success, 4: st.info}
+        boite.get(mat["case"], st.info)(
+            f"**{mat['libelle']}** — {mat['conduite']}")
+        c1, c2 = st.columns(2)
+        c1.metric("Problème thermique",
+                  "avéré" if mat["probleme"] else "non constaté",
+                  mat["motif_probleme"], delta_color="off")
+        c2.metric("Levier débit",
+                  "opérant" if mat["levier"] else "non opérant",
+                  mat["motif_levier"], delta_color="off")
+        if res.figures.get("matrice") is not None:
+            st.pyplot(res.figures["matrice"])
+            _fig_download(res.figures["matrice"], "⬇️ PNG matrice",
+                          "Matrice_Diagnostic.png")
+        st.divider()
+
     if res.figures.get("synthese") is not None:
         st.pyplot(res.figures["synthese"])
         _fig_download(res.figures["synthese"], "⬇️ PNG synthèse", "Synthese_SGVT.png")
@@ -475,6 +495,16 @@ if "🔗 Relation Q–T°" in noms:
                             "mais cela peut aussi signaler que l'effet observé "
                             "sur toute la gamme relève surtout de la covariation "
                             "saisonnière.")
+
+            _m = getattr(res, "matrice", None)
+            if _m:
+                st.caption(
+                    f"↳ Croisé avec le diagnostic de vulnérabilité, cela place "
+                    f"la station en **« {_m['libelle']} »** "
+                    f"(voir la matrice en tête de l'onglet Synthèse).")
+            st.caption("Ces corrélations sont la **source unique** du projet : "
+                       "le verrou du volet stress chronique (onglet Débits) "
+                       "consomme exactement les mêmes valeurs.")
 
             if res.figures.get("relation_debit_temp") is not None:
                 st.pyplot(res.figures["relation_debit_temp"])

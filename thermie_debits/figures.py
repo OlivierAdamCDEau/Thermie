@@ -728,3 +728,69 @@ def fig_relation_debit_temperature(rel, nom, output_dir):
                  color=col, y=1.02)
     plt.tight_layout()
     return _finalise(fig, output_dir, "Fig_Relation_Debit_Temperature.png")
+
+
+def fig_matrice_diagnostic(mat, nom, output_dir):
+    """
+    Matrice de lecture à deux entrées : « problème thermique » × « levier
+    débit ». La case correspondant à la station est mise en évidence.
+    Destinée à la restitution (gestionnaires, OFB) : elle explicite ce que
+    l'analyse permet — ou ne permet pas — de conclure.
+    """
+    if not mat:
+        return None
+    fig, ax = plt.subplots(figsize=(11.5, 6.4))
+    fig.patch.set_facecolor("white")
+    ax.set_xlim(0, 2); ax.set_ylim(0, 2); ax.axis("off")
+
+    cases = {
+        (0, 1): (1, "Débit thermique\npertinent",
+                 "Objectif de débit fondé\net opposable", "#C0392B"),
+        (1, 1): (2, "Problème réel,\nlevier autre",
+                 "Ombrage, morphologie,\nrejets, nappe", "#B9770D"),
+        (0, 0): (3, "Pas d'enjeu actuel,\nlevier disponible",
+                 "Surveillance\n(climat, prélèvements)", "#1E8449"),
+        (1, 0): (4, "Approche thermique\npeu opérante",
+                 "Autres volets HMUC\nplus pertinents", "#7F8C8D"),
+    }
+    for (cx, cy), (num, titre, sous, coul) in cases.items():
+        actif = (num == mat["case"])
+        rect = plt.Rectangle((cx, cy), 1, 1,
+                             facecolor=coul if actif else "#FDFEFE",
+                             edgecolor=coul, lw=3.0 if actif else 1.2,
+                             alpha=0.92 if actif else 0.55, zorder=1)
+        ax.add_patch(rect)
+        txt_col = "white" if actif else "#5D6D7E"
+        ax.text(cx + 0.5, cy + 0.66, titre, ha="center", va="center",
+                fontsize=12 if actif else 10.5,
+                fontweight="bold" if actif else "normal", color=txt_col, zorder=2)
+        ax.text(cx + 0.5, cy + 0.34, sous, ha="center", va="center",
+                fontsize=9 if actif else 8.5, color=txt_col, alpha=0.95, zorder=2)
+        if actif:
+            ax.text(cx + 0.08, cy + 0.9, "◀ situation de la station",
+                    fontsize=8.5, color="white", fontweight="bold",
+                    ha="left", va="center", zorder=3)
+
+    # Étiquettes des axes
+    ax.text(-0.06, 1.5, "Problème\nthermique\navéré", ha="right", va="center",
+            fontsize=10.5, fontweight="bold", color="#34495E")
+    ax.text(-0.06, 0.5, "Pas de\nproblème\nthermique", ha="right", va="center",
+            fontsize=10.5, fontweight="bold", color="#34495E")
+    ax.text(0.5, -0.09, "Levier débit OPÉRANT", ha="center", va="top",
+            fontsize=10.5, fontweight="bold", color="#34495E")
+    ax.text(1.5, -0.09, "Levier débit NON opérant", ha="center", va="top",
+            fontsize=10.5, fontweight="bold", color="#34495E")
+
+    # Bandeau de justification
+    just = (f"Problème thermique : {mat['motif_probleme']}\n"
+            f"Levier débit : {mat['motif_levier']}")
+    ax.text(1.0, -0.30, just, ha="center", va="top", fontsize=8.8,
+            color="#34495E",
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="#F4F6F7",
+                      edgecolor="#AEB6BF", alpha=0.95))
+
+    plt.suptitle(f"{nom} — Que permet de conclure l'approche thermique ?\n"
+                 f"{mat['libelle']}", fontsize=13, fontweight="bold",
+                 color=mat["couleur"], y=1.0)
+    plt.tight_layout()
+    return _finalise(fig, output_dir, "Fig_Matrice_Diagnostic.png")

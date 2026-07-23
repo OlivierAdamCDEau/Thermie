@@ -36,6 +36,7 @@ class Resultats:
     sub_eau: Any = None
     indicateurs: Any = None
     relation_debit_temp: Any = None
+    matrice: Any = None
     df_air: Any = None
     df: Any = None
     rapport_qc: Any = None
@@ -178,13 +179,21 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
                 f"Relation débit–température : {rdt['libelle'].lower()}. "
                 f"{rdt['commentaire']}")
 
+        # Matrice de lecture : « problème thermique » × « levier débit »
+        res.matrice = core.matrice_diagnostic(
+            vul, rdt, plancher_stress=getattr(config, "stress_plancher_pct", None))
+        F["matrice"] = figmod.fig_matrice_diagnostic(res.matrice, nom, out)
+        if verbose:
+            print(f"  Diagnostic d'ensemble : {res.matrice['libelle']}")
+
     # ---- 7. Débits de référence (si mode + fichier) ----
     if config.avec_debits:
         if verbose: print("\nÉtape 4 — Débits de référence...")
         dinf = core.analyse_debits_inflexion(
             df, sens, ctx, config.contexte_piscicole,
             stress_plancher_pct=getattr(config, "stress_plancher_pct", None),
-            stress_corr_r2_min=getattr(config, "stress_corr_r2_min", None))
+            stress_corr_r2_min=getattr(config, "stress_corr_r2_min", None),
+            relation=res.relation_debit_temp)
         res.debits_inflexion = dinf
         if dinf and dinf.get("valide"):
             q_vuln = dinf.get("q_vuln") if dinf.get("q_vuln_valide") else None

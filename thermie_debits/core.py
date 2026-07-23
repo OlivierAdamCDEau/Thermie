@@ -502,7 +502,8 @@ def _aic_segmente(x, y, q, q_break):
 
 
 def analyse_debits_inflexion(df, sens_res, contexte, contexte_key="cyprinicole",
-                             stress_plancher_pct=None, stress_corr_r2_min=None):
+                             stress_plancher_pct=None, stress_corr_r2_min=None,
+                             relation=None):
     """
     Détecte Q*_stat (AICc optimal → base Q_thermie_fonc, appoint) et le
     Q*_vuln par fenêtre glissante locale (→ base Q_thermie_bio, résultat
@@ -621,42 +622,28 @@ def analyse_debits_inflexion(df, sens_res, contexte, contexte_key="cyprinicole",
     pct_stress_global = 100 * (df_ete[tmh_col] > seuil_chr).mean()
     materiel = pct_stress_global >= plancher
 
-    # Verrou 2 — causalité : relation débit→température négative et significative
-    # Deux mesures complémentaires (le verrou s'ouvre si l'une est concluante) :
-    #   - BRUTE : corr(Q, Tmh) — inclut l'effet structurel du régime d'étiage,
-    #     mais vulnérable aux artefacts de calendrier (débit et température
-    #     co-varient avec la saison) ;
-    #   - PARTIELLE : corrélation des résidus après retrait de l'effet de la
-    #     température de l'AIR sur les deux variables. Répond à la question
-    #     « à forçage atmosphérique égal, le débit module-t-il la température
-    #     de l'eau ? ». Contrôler l'air plutôt que le jour de l'année la rend
-    #     robuste même sur une seule saison (pas besoin de répétitions
-    #     inter-annuelles pour estimer une normale saisonnière).
-    qv = df_ete["Q"].values
-    tv = df_ete[tmh_col].values
-    mask_ok = np.isfinite(qv) & np.isfinite(tv)
-    if mask_ok.sum() >= 10:
-        r_qt = np.corrcoef(qv[mask_ok], tv[mask_ok])[0, 1]
+    # Verrou 2 — causalité : relation débit→température.
+    # SOURCE UNIQUE : on consomme le test préalable (analyse_relation_debit_
+    # temperature) plutôt que de recalculer, afin qu'un seul et même chiffre
+    # soit affiché partout (l'onglet Relation et le diagnostic du volet stress
+    # ne peuvent plus se contredire). Repli sur un calcul local uniquement si
+    # la relation n'a pas été fournie.
+    if relation is not None and relation.get("disponible"):
+        globale = relation["lignes"][0]
+        r_qt = globale["r_brute"]; r2_qt = globale["r2_brute"]
+        r_part = globale["r_partielle"]; r2_part = globale["r2_partielle"]
+        source_correl = "test préalable (source unique)"
     else:
-        r_qt = np.nan
-    r2_qt = r_qt ** 2 if np.isfinite(r_qt) else np.nan
-
-    # Corrélation partielle contrôlée par la température de l'air
-    r_part = np.nan
-    if "T_air" in df_ete.columns:
-        av = df_ete["T_air"].values
-        m2 = mask_ok & np.isfinite(av) & (qv > 0)
-        if m2.sum() >= 15:
-            try:
-                lq = np.log(qv[m2] + 0.05)
-                deg = 3 if m2.sum() >= 40 else 1
-                res_q = lq - np.polyval(np.polyfit(av[m2], lq, deg), av[m2])
-                res_t = tv[m2] - np.polyval(np.polyfit(av[m2], tv[m2], deg), av[m2])
-                if np.std(res_q) > 1e-9 and np.std(res_t) > 1e-9:
-                    r_part = np.corrcoef(res_q, res_t)[0, 1]
-            except Exception:
-                r_part = np.nan
-    r2_part = r_part ** 2 if np.isfinite(r_part) else np.nan
+        qv = df_ete["Q"].values
+        tv = df_ete[tmh_col].values
+        mask_ok = np.isfinite(qv) & np.isfinite(tv)
+        r_qt = (np.corrcoef(qv[mask_ok], tv[mask_ok])[0, 1]
+                if mask_ok.sum() >= 10 else np.nan)
+        r2_qt = r_qt ** 2 if np.isfinite(r_qt) else np.nan
+        r_part = (corr_partielle_air(df_ete["Q"], df_ete[tmh_col], df_ete["T_air"])
+                  if "T_air" in df_ete.columns else np.nan)
+        r2_part = r_part ** 2 if np.isfinite(r_part) else np.nan
+        source_correl = "calcul local (test préalable non fourni)"
 
     def _concluant(r, r2):
         if not np.isfinite(r) or not np.isfinite(r2):
@@ -711,7 +698,7 @@ def analyse_debits_inflexion(df, sens_res, contexte, contexte_key="cyprinicole",
                        r_partielle=r_part, r2_partielle=r2_part,
                        causal_brut=causal_brut, causal_partielle=causal_part,
                        causal=causal, stress_actif=stress_actif,
-                       raison=raison_stress)
+                       raison=raison_stress, source_correl=source_correl)
 
     base = df.attrs.get("base_debit", "influencé")
     print(f"  Base de débit            : {base}")
@@ -1031,3 +1018,86 @@ def analyse_relation_debit_temperature(df, tmh_col=None, r2_min=0.10,
               f"(partielle globale = {rp_g:+.2f})" if np.isfinite(rp_g)
               else f"  Relation débit–température : {libelle}")
     return res
+
+
+# ============================================================
+# MATRICE DE DIAGNOSTIC — cadre de lecture à deux entrées
+# ============================================================
+def matrice_diagnostic(vul_res, relation, debits_inflexion=None,
+                       plancher_stress=None):
+    """
+    Croise les DEUX questions que l'approche thermique pose, et qu'il ne faut
+    pas confondre :
+
+      axe 1 — « Y a-t-il un problème thermique ? »
+              (stress chronique au-dessus du plancher, ou létalité observée)
+      axe 2 — « Le débit est-il un levier opérant ? »
+              (relation débit→température établie)
+
+    Le croisement donne quatre situations, chacune appelant une conduite
+    différente. C'est ce cadre — et non la mécanique interne des verrous — qui
+    doit être présenté aux gestionnaires et à l'OFB.
+
+    Retourne un dict : axes, case (1-4), libellé, conduite à tenir, couleur.
+    """
+    plancher = plancher_stress if plancher_stress is not None else STRESS_PLANCHER_PCT
+
+    # --- Axe 1 : problème thermique avéré ? ---
+    pct_chr = vul_res.get("pct_chr", 0.0) if vul_res else 0.0
+    n_aigu = vul_res.get("n_aigu", 0) if vul_res else 0
+    probleme = (pct_chr >= plancher) or (n_aigu >= 1)
+    motif_probleme = []
+    if pct_chr >= plancher:
+        motif_probleme.append(f"stress chronique {pct_chr:.1f}% (≥ {plancher:.0f}%)")
+    if n_aigu >= 1:
+        motif_probleme.append(f"{n_aigu} jour(s) de dépassement létal")
+    if not motif_probleme:
+        motif_probleme.append(f"stress chronique {pct_chr:.1f}% et aucune létalité")
+
+    # --- Axe 2 : levier débit opérant ? ---
+    dispo_rel = bool(relation and relation.get("disponible"))
+    verdict = relation.get("verdict") if dispo_rel else None
+    levier = (verdict == "etablie")
+    motif_levier = relation.get("libelle", "test non réalisable") if dispo_rel \
+        else "test non réalisable (débit absent ou données insuffisantes)"
+
+    # --- Croisement ---
+    if probleme and levier:
+        case, cle = 1, "agir_debit"
+        libelle = "Débit thermique pertinent"
+        conduite = ("Le milieu présente un problème thermique ET le débit en est "
+                    "un levier effectif : les débits de référence thermique sont "
+                    "fondés et peuvent être portés en arbitrage.")
+        couleur = "#C0392B"
+    elif probleme and not levier:
+        case, cle = 2, "autre_levier"
+        libelle = "Problème réel, mais levier autre que le débit"
+        conduite = ("Le problème thermique est avéré, mais la température ne "
+                    "répond pas au débit. Agir sur l'hydrologie serait peu "
+                    "efficace : orienter vers l'ombrage rivulaire, la "
+                    "morphologie, la réduction des rejets thermiques ou les "
+                    "apports de nappe. Les débits calculés restent indicatifs.")
+        couleur = "#B9770D"
+    elif (not probleme) and levier:
+        case, cle = 3, "veille"
+        libelle = "Pas d'enjeu thermique actuel, levier disponible"
+        conduite = ("Aucun problème thermique constaté sur la chronique, alors "
+                    "même que le débit influence la température. Il n'y a pas "
+                    "lieu de fixer un objectif contraignant, mais le milieu "
+                    "reste sensible à une baisse future des débits : situation "
+                    "à surveiller (changement climatique, nouveaux prélèvements).")
+        couleur = "#1E8449"
+    else:
+        case, cle = 4, "hors_champ"
+        libelle = "Approche thermique peu opérante"
+        conduite = ("Ni problème thermique constaté, ni lien entre débit et "
+                    "température. L'approche « débits thermiques » n'apporte pas "
+                    "d'élément de gestion sur cette station ; d'autres volets "
+                    "de l'étude HMUC sont plus pertinents.")
+        couleur = "#7F8C8D"
+
+    return dict(case=case, cle=cle, libelle=libelle, conduite=conduite,
+                couleur=couleur, probleme=probleme, levier=levier,
+                motif_probleme=" · ".join(motif_probleme),
+                motif_levier=motif_levier, plancher=plancher,
+                pct_chr=pct_chr, n_aigu=n_aigu, verdict_relation=verdict)

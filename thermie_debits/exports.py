@@ -129,18 +129,38 @@ def exporter_synthese_xlsx(sens, vul, sgvt, contexte, nom, localisation, output_
         else:
             row_data(r, "Composante non évaluée (chronique lacunaire)", "—",
                      "SGVT sur 3 comp.", "—", "—", "FADBD8"); r += 1
+        # Détail par espèce ET par phase de reproduction
         for s in fr.get("sous_indicateurs", []):
-            if disponible and s["espece"] == esp_lim: continue
-            fen = "-".join(map(str, s["fenetre"]))
-            if s.get("evalue"):
-                rec = f"  ({s['n_annees']} an)" if s.get("n_annees") else ""
-                row_data(r, f"   ↳ {s['espece']} (fenêtre {fen})",
-                         f"{s['pct']:.1f}%{rec}", s["cat"], f"P={s['P']}", "—",
-                         "FCF3CF"); r += 1
-            else:
-                row_data(r, f"   ↳ {s['espece']} (fenêtre {fen})",
-                         f"central {s['n_central']}j", "non évalué (mois central)",
-                         "—", "—", "FADBD8"); r += 1
+            if not s.get("evalue"):
+                row_data(r, f"   ↳ {s['espece']} — non évalué",
+                         s.get("motif", "—"), "—", "—", "—", "FADBD8"); r += 1
+                continue
+            marque = " ★ repère" if s["espece"] == esp_lim else ""
+            froid = ("froid bloquant" if s.get("froid_bloquant")
+                     else "froid ralentissant")
+            row_data(r, f"   ↳ {s['espece']}{marque} ({froid})",
+                     f"opt {s['pct_optimum']:.0f}% / élargie "
+                     f"{s['pct_elargie']:.0f}% / létal {s['pct_letal']:.0f}%",
+                     s["cat"], f"P={s['P']}", f"sév {s['sev_moy']:.2f}",
+                     "FCF3CF"); r += 1
+            for ph in s.get("phases", []):
+                if not ph.get("n"):
+                    row_data(r, f"        · {ph['nom']}", "aucune donnée",
+                             "—", "—", "—", "FDFEFE"); r += 1
+                    continue
+                crit = " (critique)" if ph.get("critique") else ""
+                fen = (f"opt {ph['opt'][0]:.0f}-{ph['opt'][1]:.0f} / élargie "
+                       f"{ph['elargie'][0]:.0f}-{ph['elargie'][1]:.0f} C")
+                row_data(r, f"        · {ph['nom']}{crit}",
+                         f"opt {ph['pct_optimum']:.0f}% / élargie "
+                         f"{ph['pct_elargie']:.0f}% / létal {ph['pct_letal']:.0f}%",
+                         fen, f"n={ph['n']}",
+                         "couvert" if ph.get("evaluee") else "central lacunaire",
+                         "FDFEFE"); r += 1
+            row_data(r, "        · [info] temperatures brutes",
+                     f"opt {s['pct_optimum_brut']:.0f}% / élargie "
+                     f"{s['pct_elargie_brut']:.0f}% / létal {s['pct_letal_brut']:.0f}%",
+                     "non compensées", "—", "—", "F4F6F7"); r += 1
 
     ncomp = sg.get("composantes", 3)
     hdr(r, 1, f"SGVT — information d'appoint ({ncomp} composantes)", "6C3483", span=5); r += 1

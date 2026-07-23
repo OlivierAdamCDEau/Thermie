@@ -1,7 +1,6 @@
 __pycache__/
 *.py[cod]
 .venv/
-venv/
 outputs/
 *.png
 *.xlsx
@@ -9,6 +8,4 @@ outputs/
 *.csv
 !examples/*.csv
 .DS_Store
-.idea/
-.vscode/
 .streamlit/secrets.toml
