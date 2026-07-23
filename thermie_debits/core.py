@@ -890,7 +890,7 @@ def segments_valides(dates, valeurs, seuil_pas=3, pas=None):
 # ============================================================
 # TEST PRÉALABLE — le débit module-t-il la température de l'eau ?
 # ============================================================
-def corr_partielle_air(q, teau, tair, deg=3, n_min=15):
+def corr_partielle_air(q, teau, tair, deg=3, n_min=15, lissage_air=7):
     """
     Corrélation partielle entre débit et température de l'eau, à température
     de l'AIR égale : on retire de chaque variable l'effet du forçage
@@ -905,6 +905,14 @@ def corr_partielle_air(q, teau, tair, deg=3, n_min=15):
     q = np.asarray(q, dtype=float)
     teau = np.asarray(teau, dtype=float)
     tair = np.asarray(tair, dtype=float)
+    # La température de l'eau répond au forçage atmosphérique avec INERTIE :
+    # on contrôle par l'air lissé sur quelques jours plutôt que par l'air du
+    # jour. Cela capte mieux la relation air-eau réelle et laisse donc moins
+    # de structure saisonnière résiduelle susceptible de se corréler à tort
+    # avec le débit (réduction des faux positifs, sans perte de détection).
+    if lissage_air and lissage_air > 1 and np.isfinite(tair).sum() > lissage_air:
+        tair = (pd.Series(tair).rolling(lissage_air, min_periods=1, center=True)
+                .mean().values)
     m = np.isfinite(q) & np.isfinite(teau) & np.isfinite(tair) & (q > 0)
     if m.sum() < n_min:
         return np.nan

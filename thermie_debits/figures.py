@@ -329,7 +329,11 @@ def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
                 LINE([f"    ↳ {s['espece']}", f'{s["pct"]:.1f}%{rec}', s["cat"],
                       f'P={s["P"]}', "—"], "#FCF3CF", "#7e5109")
             else:
-                LINE([f"    ↳ {s['espece']}", f'central {s["n_central"]}j',
+                # Espèce non évaluable : le motif est porté par la nouvelle
+                # structure à phases (les champs de l'ancien modèle à fenêtre
+                # unique, comme n_central, n'existent plus à ce niveau).
+                motif = s.get("motif", "phases critiques non couvertes")
+                LINE([f"    ↳ {s['espece']}", str(motif)[:38],
                       "non évalué", "—", "—"], "#FADBD8", "#943126")
     SEP("── SCORE GLOBAL (appoint) ──", C["bg"])
     LINE(["SGVT" + (f' ({sg.get("composantes",3)} comp.)' if sg.get("composantes") else ""),
