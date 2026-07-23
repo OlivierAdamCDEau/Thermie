@@ -318,35 +318,63 @@ with ong[4]:
         st.metric("P_fraie", fr["P_fraie"],
                   f"repère : {fr['espece_limitante']} ({fr.get('n_annees','?')} an)")
     if fr:
-        st.caption("Pondération à 3 niveaux : optimum strict (aucune pénalité), "
-                   "fenêtre élargie non létale (pénalité intermédiaire), au-delà "
-                   "= létalité embryonnaire (pénalité forte). Calculs sur "
+        st.caption("Trois phases successives — **pré-frai**, **ponte**, "
+                   "**incubation** — aux tolérances thermiques distinctes. Pour "
+                   "chacune : optimum strict (aucune pénalité), tolérance "
+                   "élargie (pénalité intermédiaire), au-delà = létalité ou "
+                   "échec reproducteur (pénalité forte). Calculs sur "
                    "**températures normalisées**.")
+
+        # --- Synthèse par espèce ---
         rows = []
         for si in fr.get("sous_indicateurs", []):
             ev = si.get("evalue")
-            rows.append(dict(
-                Espèce=si["espece"],
-                Statut="évalué" if ev else "non évalué",
-                Optimum=(f"{si['opt'][0]}–{si['opt'][1]}°C" if ev else "—"),
-                Élargie=(f"{si['elargie'][0]}–{si['elargie'][1]}°C"
-                         if ev and si.get("elargie") else "—"),
-                **{"% optimum": f"{si['pct_optimum']:.0f}" if ev else "—"},
-                **{"% élargie": f"{si['pct_elargie']:.0f}" if ev else "—"},
-                **{"% létal": f"{si['pct_letal']:.0f}" if ev else "—"},
-                **{"Sévérité moy.": f"{si['sev_moy']:.2f}" if ev else "—"},
-                **{"Mois central (j)": si.get("n_central", "—")},
-                **{"Années": si.get("n_annees", "—")},
-                Catégorie=si.get("cat", "—")))
+            rows.append({
+                "Espèce": si["espece"],
+                "Statut": "évalué" if ev else "non évalué",
+                "% optimum": f"{si['pct_optimum']:.0f}" if ev else "—",
+                "% élargie": f"{si['pct_elargie']:.0f}" if ev else "—",
+                "% létal": f"{si['pct_letal']:.0f}" if ev else "—",
+                "Sévérité moy.": f"{si['sev_moy']:.2f}" if ev else "—",
+                "Froid": ("bloquant" if si.get("froid_bloquant") else
+                          "ralentissant") if ev else "—",
+                "Catégorie": si.get("cat", si.get("motif", "—"))})
         st.dataframe(rows, use_container_width=True)
 
-        # Températures BRUTES (non compensées) — information seulement
-        rows_brut = [r for r in
-                     [dict(Espèce=si["espece"],
-                           **{"% optimum (brut)": f"{si['pct_optimum_brut']:.0f}"},
-                           **{"% élargie (brut)": f"{si['pct_elargie_brut']:.0f}"},
-                           **{"% létal (brut)": f"{si['pct_letal_brut']:.0f}"})
-                      for si in fr.get("sous_indicateurs", []) if si.get("evalue")]]
+        # --- Détail par phase ---
+        st.markdown("**Détail par phase de reproduction**")
+        rows_ph = []
+        for si in fr.get("sous_indicateurs", []):
+            for ph in si.get("phases", []):
+                if not ph.get("n"):
+                    rows_ph.append({"Espèce": si["espece"], "Phase": ph["nom"],
+                                    "Fenêtre °C": "—", "n (jours)": 0,
+                                    "% optimum": "—", "% élargie": "—",
+                                    "% létal": "—", "Couverture": "aucune donnée"})
+                    continue
+                rows_ph.append({
+                    "Espèce": si["espece"],
+                    "Phase": ph["nom"] + (" ★" if ph.get("critique") else ""),
+                    "Fenêtre °C": f"{ph['opt'][0]:.0f}–{ph['opt'][1]:.0f} "
+                                  f"(élargie {ph['elargie'][0]:.0f}–{ph['elargie'][1]:.0f})",
+                    "n (jours)": ph["n"],
+                    "% optimum": f"{ph['pct_optimum']:.0f}",
+                    "% élargie": f"{ph['pct_elargie']:.0f}",
+                    "% létal": f"{ph['pct_letal']:.0f}",
+                    "Couverture": ("mois central couvert" if ph.get("evaluee")
+                                   else "mois central lacunaire")})
+        st.dataframe(rows_ph, use_container_width=True)
+        st.caption("★ phase critique : au moins une doit être couverte pour que "
+                   "le sous-indicateur soit évalué. En pré-frai, une eau trop "
+                   "froide décale le frai sans le compromettre — la pénalité y "
+                   "reste intermédiaire.")
+
+        # --- Températures brutes (information) ---
+        rows_brut = [{"Espèce": si["espece"],
+                      "% optimum (brut)": f"{si['pct_optimum_brut']:.0f}",
+                      "% élargie (brut)": f"{si['pct_elargie_brut']:.0f}",
+                      "% létal (brut)": f"{si['pct_letal_brut']:.0f}"}
+                     for si in fr.get("sous_indicateurs", []) if si.get("evalue")]
         if rows_brut:
             with st.expander("🌡️ Températures brutes non compensées (information)"):
                 st.caption("Ces valeurs n'entrent pas dans le score. Elles "
@@ -354,6 +382,14 @@ with ong[4]:
                            "précoces sur la période observée, sans "
                            "normalisation climatique.")
                 st.dataframe(rows_brut, use_container_width=True)
+
+        # --- Références bibliographiques ---
+        srcs = {si["espece"]: si.get("src", "") for si in
+                fr.get("sous_indicateurs", []) if si.get("src")}
+        if srcs:
+            with st.expander("📚 Références bibliographiques des seuils"):
+                for e, src in srcs.items():
+                    st.markdown(f"**{e.capitalize()}** — {src}")
     if res.figures.get("fraie") is not None:
         st.pyplot(res.figures["fraie"])
 

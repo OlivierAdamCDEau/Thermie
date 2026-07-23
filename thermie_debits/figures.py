@@ -189,73 +189,96 @@ def fig_vulnerabilite(vul, contexte, nom, output_dir):
 
 def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
     """
-    Figure de restitution de la composante fraie-croissance : pour chaque
-    espèce/sous-indicateur, chronique Tmh_norm sur la fenêtre de fraie avec
-    bande optimale, borne de résistance et zones d'écart pénalisées.
+    Vulnérabilité fraie-croissance, par espèce repère et par PHASE.
+    Les bandes colorées (optimum en vert, tolérance élargie en jaune) se
+    déplacent au fil de la saison : chaque phase — pré-frai, ponte,
+    incubation — a sa propre fenêtre thermique.
     """
     if not fraie_res:
-        return
-    sous = [s for s in fraie_res["sous_indicateurs"] if "sub" in s]
+        return None
+    sous = [s for s in fraie_res.get("sous_indicateurs", []) if s.get("evalue")]
     if not sous:
-        print("  (fraie : aucune donnée à tracer)")
-        return
+        return None
+
     n = len(sous)
-    fig, axes = plt.subplots(n, 1, figsize=(14, 5.2 * n), squeeze=False)
+    fig, axes = plt.subplots(n, 1, figsize=(15, 5.2 * n), squeeze=False)
     fig.patch.set_facecolor("white")
-    mois_noms = {1:"Jan",2:"Fév",3:"Mar",4:"Avr",5:"Mai",6:"Juin",
-                 7:"Juil",8:"Aoû",9:"Sep",10:"Oct",11:"Nov",12:"Déc"}
+
     for i, s in enumerate(sous):
-        ax = axes[i][0]; ax.set_facecolor("#f8f9fa")
+        ax = axes[i][0]
+        ax.set_facecolor("#f8f9fa")
         sub = s["sub"].sort_values("date_dt")
-        # Couper le tracé aux lacunes de mesure (évite les faux raccords sur
-        # de grandes plages sans données — point 2 des retours terrain).
         from .core import inserer_lacunes
         sub = inserer_lacunes(sub, col_date="date_dt",
                               cols_valeurs=["Tmh_norm_fraie"], seuil_pas=3)
-        opt_min, opt_max = s["opt"]
-        elar_min, elar_max = s.get("elargie", s["opt"])
-        limitant = (s["espece"] == fraie_res["espece_limitante"])
-        # 3 zones : optimum (vert), élargie non létale (jaune), au-delà = létal
-        ax.axhspan(opt_min, opt_max, alpha=0.18, color="#27ae60", zorder=0,
-                   label=f"Optimum {opt_min}–{opt_max}°C")
-        ax.axhspan(opt_max, elar_max, alpha=0.15, color="#F4D03F", zorder=0,
-                   label=f"Élargie {elar_min}–{elar_max}°C (non létal)")
-        if elar_min < opt_min:
-            ax.axhspan(elar_min, opt_min, alpha=0.15, color="#F4D03F", zorder=0)
-        ax.axhline(elar_max, color="#c0392b", lw=1.8, ls="--", zorder=2,
-                   label=f"Seuil létal (>{elar_max:.0f}°C)")
-        # chronique normalisée
-        ax.plot(sub["date_dt"], sub["Tmh_norm_fraie"], color="#2471A3", lw=1.6,
-                zorder=3, label="Tmh normalisée (m_saison)")
-        # surligner les jours en zone létale (au-dessus de l'élargie côté chaud)
-        ax.fill_between(sub["date_dt"], elar_max, sub["Tmh_norm_fraie"],
-                        where=sub["Tmh_norm_fraie"] > elar_max, alpha=0.35,
-                        color="#e74c3c", zorder=1, label="Zone létale")
-        fen = " ".join(mois_noms[m] for m in s["fenetre"])
-        src_m = s["m_info"]["source"]
-        titre = (f"{s['espece'].capitalize()} — fenêtre {fen}"
-                 f"  |  optimum {s.get('pct_optimum', 0):.0f}% · "
-                 f"élargie {s.get('pct_elargie', 0):.0f}% · "
-                 f"létal {s.get('pct_letal', 0):.0f}% → P={s['P']} ({s['cat']})"
-                 f"{'  ★ retenu' if limitant else ''}")
+        dates = sub["date_dt"].values
+        mois = pd.to_datetime(sub["date_dt"]).dt.month.values
+
+        # Bandes thermiques par phase (elles se déplacent dans le temps)
+        deja_leg = set()
+        for ph in s["phases"]:
+            if not ph.get("n"):
+                continue
+            msk = np.isin(mois, ph["mois"])
+            if not msk.any():
+                continue
+            o0, o1 = ph["opt"]; e0, e1 = ph["elargie"]
+            lab_o = "Optimum de la phase" if "o" not in deja_leg else None
+            lab_e = "Tolérance élargie" if "e" not in deja_leg else None
+            lab_l = "Seuil de létalité / échec" if "l" not in deja_leg else None
+            deja_leg |= {"o", "e", "l"}
+            ax.fill_between(dates, o0, o1, where=msk, color="#27ae60",
+                            alpha=0.20, zorder=0, label=lab_o, step="mid")
+            ax.fill_between(dates, o1, e1, where=msk, color="#F4D03F",
+                            alpha=0.22, zorder=0, label=lab_e, step="mid")
+            ax.fill_between(dates, e0, o0, where=msk, color="#F4D03F",
+                            alpha=0.22, zorder=0, step="mid")
+            ax.plot(dates, np.where(msk, e1, np.nan), color="#c0392b",
+                    lw=1.6, ls="--", zorder=2, label=lab_l)
+            ax.plot(dates, np.where(msk, e0, np.nan), color="#c0392b",
+                    lw=1.2, ls=":", zorder=2)
+
+        ax.plot(dates, sub["Tmh_norm_fraie"], color="#1A5276", lw=1.7,
+                zorder=3, label="T° eau normalisée")
+
+        # Repères de phases en haut du panneau
+        ymax = np.nanmax(sub["Tmh_norm_fraie"].values)
+        for ph in s["phases"]:
+            if not ph.get("n"):
+                continue
+            msk = np.isin(mois, ph["mois"])
+            if msk.any():
+                idx = np.where(msk)[0]
+                x_mid = dates[idx[len(idx) // 2]]
+                ax.annotate(ph["cle"], xy=(x_mid, ymax), fontsize=7.5,
+                            ha="center", va="bottom", color="#566573",
+                            annotation_clip=True)
+
+        limitant = (s["espece"] == fraie_res.get("espece_limitante"))
+        titre = (f"{s['espece'].capitalize()}  |  optimum {s['pct_optimum']:.0f}% · "
+                 f"élargie {s['pct_elargie']:.0f}% · létal {s['pct_letal']:.0f}% "
+                 f"→ P={s['P']} ({s['cat']})"
+                 f"{'   ★ retenu' if limitant else ''}")
         ax.set_title(titre, fontsize=10.5, fontweight="bold",
                      color="#1A5276" if limitant else "#555555")
-        ax.set_ylabel("Tmh normalisée (°C)", fontsize=10)
-        ax.legend(fontsize=8, loc="upper right", ncol=2, framealpha=0.9)
+        ax.set_ylabel("T° eau normalisée (°C)", fontsize=10)
+        ax.legend(fontsize=8, loc="upper left", ncol=4, framealpha=0.9)
         ax.grid(True, alpha=0.3)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %y"))
-        info = (f"m_saison={s['m_saison']:.3f} ({src_m})\n"
-                f"sévérité moy. = {s['sev_moy']:.2f}\n"
-                f"[info] brut hors opt. = {s.get('pct_brut', float('nan')):.0f}%")
-        ax.text(0.01, 0.97, info, transform=ax.transAxes, fontsize=8,
-                va="top", ha="left",
-                bbox=dict(boxstyle="round,pad=0.4", facecolor="#FEF9E7",
-                          edgecolor="#F9E79F"))
-    plt.suptitle(f"{nom} — Vulnérabilité fraie-croissance (composante SGVT)\n"
+
+        info = (f"m_saison = {s['m_saison']:.3f}\n"
+                f"sévérité moyenne = {s['sev_moy']:.2f}\n"
+                f"[info] brut hors optimum = {s.get('pct_brut', float('nan')):.0f}%\n"
+                f"froid {'bloquant' if s.get('froid_bloquant') else 'ralentissant'}")
+        ax.text(0.005, 0.03, info, transform=ax.transAxes, fontsize=7.5,
+                va="bottom", ha="left", color="#34495E",
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="#FDFEFE",
+                          edgecolor="#AEB6BF", alpha=0.9))
+
+    plt.suptitle(f"{nom} — Vulnérabilité fraie-croissance par phase\n"
                  f"{contexte['label']}", fontsize=13, fontweight="bold", y=1.005)
     plt.tight_layout()
-    return _finalise(fig, output_dir, "Fig2bis_Fraie_Croissance.png")
-
+    return _finalise(fig, output_dir, "Fig3_Fraie_Croissance.png")
 
 def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
     sg = sgvt_res; sr = sens_res; vr = vul_res; ctx = contexte["label"]

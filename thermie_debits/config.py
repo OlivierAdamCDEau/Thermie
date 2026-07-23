@@ -101,30 +101,118 @@ class QCConfig:
 #   opt : [Topt_min, Topt_max]  |  res : borne de résistance haute
 #   T_fraie : T° de fraie de référence (garde-fou Rombough)
 #   pente : sévérité de pénalisation ('forte' sténotherme, 'moderee', 'faible')
+# ============================================================
+# PARAMÈTRES DE REPRODUCTION PAR ESPÈCE REPÈRE (note §2.7)
+# ============================================================
+# Chaque espèce est décrite par TROIS PHASES fonctionnelles successives —
+# pré-frai (maturation, regroupement), ponte (fécondation) et incubation
+# (développement embryonnaire jusqu'à l'émergence) — car leur tolérance
+# thermique diffère : la ponte est la phase la plus étroite, l'incubation la
+# plus longue et la plus déterminante pour le succès de la cohorte.
+#
+# Pour chaque phase :
+#   mois          : mois couverts (les phases peuvent se chevaucher ; un jour
+#                   partagé reçoit le score le plus contraignant)
+#   mois_central  : cœur de la phase, sert au critère de couverture (§2.7.3)
+#   opt           : optimum strict          → pénalité nulle
+#   elargie       : tolérance non létale     → pénalité intermédiaire
+#   au-delà       : létalité / échec         → pénalité forte
+#   critique      : phase déterminante pour l'évaluabilité du sous-indicateur
+#
+# `froid_bloquant` : côté froid, distingue deux situations biologiques.
+#   - False (truite, pondeur automnal) : le froid RALENTIT l'incubation sans
+#     mortalité massive → pénalité plafonnée au palier intermédiaire.
+#   - True (ombre, brochet, brème — pondeurs printaniers/estivaux) : le froid
+#     BLOQUE la reproduction (refus de pondre, atrésie folliculaire chez la
+#     brème) → échec reproducteur complet, pénalité forte au même titre que
+#     la létalité par le chaud.
 FRAIE_PARAMS = {
     "salmonicole": {
-        "truite fario": dict(fenetre=[10, 11, 12], mois_central=11,
-                             opt=[6, 8], elargie=[4, 10], res=10.0,
-                             T_fraie=8.0, pente="forte",
-                             src="Réalis-Doyelle & Teletchea 2016"),
+        "truite fario": dict(
+            froid_bloquant=False,
+            src=("Elliott & Hurley 1998 ; Réalis-Doyelle et al. 2016 ; "
+                 "Crisp 1993 ; Ojanguren & Braña 2003 ; Lahnsteiner 2012"),
+            phases=[
+                dict(cle="prefrai", nom="Pré-frai / maturation",
+                     mois=[10, 11], mois_central=10, critique=False,
+                     opt=[1.0, 10.0], elargie=[0.0, 12.0],
+                     note="refroidissement requis ; > 10–12 °C bloque la "
+                          "maturation hormonale et dégrade la qualité des œufs"),
+                dict(cle="ponte", nom="Ponte / fécondation",
+                     mois=[11, 12, 1], mois_central=12, critique=True,
+                     opt=[4.0, 8.0], elargie=[1.0, 11.0],
+                     note="cœur 5–7 °C ; tolérance la plus étroite du cycle"),
+                dict(cle="incubation", nom="Incubation / émergence",
+                     mois=[12, 1, 2, 3], mois_central=2, critique=True,
+                     opt=[4.0, 8.0], elargie=[1.0, 11.0],
+                     note="400–450 °C·j ; survie < 1 % à 12 °C "
+                          "(Réalis-Doyelle et al. 2016)"),
+            ]),
     },
     "intermediaire": {
-        "ombre commun": dict(fenetre=[3, 4, 5], mois_central=4,
-                             opt=[6, 8], elargie=[6, 10], res=10.0,
-                             T_fraie=8.0, pente="forte",
-                             src="Rosenau 2025"),
+        "ombre commun": dict(
+            froid_bloquant=True,
+            src=("Jungwirth & Winkler 1984 ; Humpesch 1985 ; "
+                 "Fabricius & Gustafson 1955 ; Nykänen & Huusko 2002"),
+            phases=[
+                dict(cle="prefrai", nom="Pré-frai / regroupement",
+                     mois=[3], mois_central=3, critique=False,
+                     opt=[5.0, 9.0], elargie=[4.0, 11.0],
+                     note="déclencheur : passage durable au-dessus de 6–7 °C"),
+                dict(cle="ponte", nom="Ponte / fécondation",
+                     mois=[3, 4], mois_central=4, critique=True,
+                     opt=[7.0, 10.0], elargie=[5.0, 12.0],
+                     note="pic 8–10 °C ; sous 6 °C les femelles ne pondent pas"),
+                dict(cle="incubation", nom="Incubation / émergence",
+                     mois=[4, 5], mois_central=4, critique=True,
+                     opt=[6.0, 10.0], elargie=[4.0, 12.0],
+                     note="180–220 °C·j ; malformations au-delà de 12 °C, "
+                          "létalité > 14 °C"),
+            ]),
     },
     "cyprinicole": {
-        "brochet": dict(fenetre=[2, 3, 4], mois_central=3,
-                        opt=[8, 14], elargie=[8, 15], res=22.0,
-                        T_fraie=11.0, pente="faible",
-                        src="Souchon & Tissot 2012 ; Réalis-Doyelle & Teletchea 2022"),
-        "brème":   dict(fenetre=[5, 6], mois_central=6,
-                        opt=[12, 21], elargie=[12, 23], res=23.0,
-                        T_fraie=20.0, pente="moderee",
-                        src="Souchon & Tissot 2012 ; Kucharczyk 2013"),
+        "brochet": dict(
+            froid_bloquant=True,
+            src=("Hokanson et al. 1973 ; Bry 1996 ; Casselman 1996 ; "
+                 "Crane et al. 2015 ; Frost & Kipling 1967"),
+            phases=[
+                dict(cle="prefrai", nom="Pré-frai / migration",
+                     mois=[2], mois_central=2, critique=False,
+                     opt=[4.0, 7.0], elargie=[2.0, 10.0],
+                     note="géniteurs en bordure dès 4–5 °C"),
+                dict(cle="ponte", nom="Ponte / fécondation",
+                     mois=[2, 3], mois_central=3, critique=True,
+                     opt=[7.0, 11.0], elargie=[4.0, 14.0],
+                     note="pic 8–10 °C ; ponte ralentie sous 6 °C"),
+                dict(cle="incubation", nom="Incubation / pro-larve",
+                     mois=[3, 4], mois_central=3, critique=True,
+                     opt=[8.0, 12.0], elargie=[4.0, 14.0],
+                     note="110–130 °C·j + ~100 °C·j de résorption ; "
+                          "mortalité > 80 % au-delà de 14–15 °C"),
+            ]),
+        "brème": dict(
+            froid_bloquant=True,
+            src=("Herzig & Winkler 1986 ; Poncin et al. 1996 ; "
+                 "Kucharczyk et al. 1997 ; Sych et al. 1999 ; Humpesch 1985"),
+            phases=[
+                dict(cle="prefrai", nom="Pré-frai / regroupement",
+                     mois=[4, 5], mois_central=5, critique=False,
+                     opt=[12.0, 16.0], elargie=[10.0, 20.0],
+                     note="boutons de noces dès 12 °C ; atrésie folliculaire "
+                          "si l'eau reste sous 12 °C"),
+                dict(cle="ponte", nom="Ponte / fécondation",
+                     mois=[5, 6], mois_central=6, critique=True,
+                     opt=[15.0, 20.0], elargie=[13.0, 23.0],
+                     note="pic 17–19 °C ; le frai s'interrompt sous 14 °C"),
+                dict(cle="incubation", nom="Incubation / stade larvaire",
+                     mois=[6, 7], mois_central=6, critique=True,
+                     opt=[16.0, 21.0], elargie=[13.0, 24.0],
+                     note="90–110 °C·j ; anomalies morphologiques > 24 °C, "
+                          "échec complet > 26 °C"),
+            ]),
     },
 }
+
 
 CONTEXTES = {
     "salmonicole": {

@@ -223,38 +223,37 @@ def _m_saisonnier(df, mois, m_estival, verbose=True):
     return sl, dict(source="saisonnier", n=len(sub), r2=r2, m=sl)
 
 
-def _severite_fraie(tmh, opt_min, opt_max, elargie_min, elargie_max):
+def _severite_fraie(tmh, opt_min, opt_max, elargie_min, elargie_max,
+                    froid_bloquant=False):
     """
-    Score de sévérité journalier à 3 PALIERS (note révisée) :
-      - dans l'optimum strict [opt_min, opt_max]         → 0
-      - dans la fenêtre élargie mais hors optimum         → FRAIE_SCORE_ELARGIE
-      - au-delà de la fenêtre élargie côté CHAUD (létal)  → FRAIE_SCORE_LETAL
-      - au-delà de la fenêtre élargie côté FROID          → plafonné à
-        FRAIE_SCORE_ELARGIE si FRAIE_FROID_PLAFOND_INTERMEDIAIRE (le froid
-        ralentit l'incubation sans létalité massive ; létalité forte réservée
-        au chaud, cas dominant sous réchauffement).
+    Score de sévérité journalier à 3 PALIERS, pour une phase donnée.
 
-    Les températures passées sont les températures NORMALISÉES (année standard).
-    Retourne un tableau de scores par jour.
+      - dans l'optimum strict [opt_min, opt_max]        → 0
+      - dans la tolérance élargie, hors optimum          → FRAIE_SCORE_ELARGIE
+      - au-delà de l'élargie côté CHAUD (létalité)       → FRAIE_SCORE_LETAL
+      - au-delà de l'élargie côté FROID :
+          * froid_bloquant=False (truite, pondeur automnal) → plafonné au
+            palier intermédiaire : le froid ralentit l'incubation sans
+            mortalité massive ;
+          * froid_bloquant=True (ombre, brochet, brème) → palier fort : chez
+            les pondeurs printaniers et estivaux le froid empêche la ponte
+            (refus de frayer, atrésie folliculaire), soit un échec
+            reproducteur complet.
+
+    Températures attendues : NORMALISÉES (année standard).
     """
     x = np.asarray(tmh, dtype=float)
     sev = np.full_like(x, np.nan)
-    # optimum strict → 0
-    opt = (x >= opt_min) & (x <= opt_max)
-    sev[opt] = 0.0
-    # fenêtre élargie côté chaud (hors optimum) → intermédiaire
-    elar_chaud = (x > opt_max) & (x <= elargie_max)
-    sev[elar_chaud] = FRAIE_SCORE_ELARGIE
-    # fenêtre élargie côté froid (hors optimum) → intermédiaire
-    elar_froid = (x < opt_min) & (x >= elargie_min)
-    sev[elar_froid] = FRAIE_SCORE_ELARGIE
-    # au-delà élargie, côté chaud → létal (fort)
-    letal_chaud = x > elargie_max
-    sev[letal_chaud] = FRAIE_SCORE_LETAL
-    # au-delà élargie, côté froid → plafonné intermédiaire (ou fort si désactivé)
-    froid_ext = x < elargie_min
-    sev[froid_ext] = (FRAIE_SCORE_ELARGIE if FRAIE_FROID_PLAFOND_INTERMEDIAIRE
-                      else FRAIE_SCORE_LETAL)
+    sev[(x >= opt_min) & (x <= opt_max)] = 0.0
+    sev[(x > opt_max) & (x <= elargie_max)] = FRAIE_SCORE_ELARGIE
+    sev[(x < opt_min) & (x >= elargie_min)] = FRAIE_SCORE_ELARGIE
+    sev[x > elargie_max] = FRAIE_SCORE_LETAL
+    if froid_bloquant:
+        sev[x < elargie_min] = FRAIE_SCORE_LETAL
+    else:
+        sev[x < elargie_min] = (FRAIE_SCORE_ELARGIE
+                                if FRAIE_FROID_PLAFOND_INTERMEDIAIRE
+                                else FRAIE_SCORE_LETAL)
     return sev
 
 
@@ -282,14 +281,19 @@ def _rombough_check(opt_min, opt_max, res, t_fraie, espece, pente_key="moderee",
 def analyse_fraie_croissance(df, m_estival, contexte, contexte_key="cyprinicole",
                              verbose=True):
     """
-    Calcule la composante fraie-croissance P_fraie (score /3) et ses détails.
-    Pour la zone cyprinicole : deux sous-indicateurs (brochet + brème), le plus
-    contraignant alimente P_fraie ; les deux sont conservés pour l'affichage.
+    Composante fraie-croissance P_fraie (score /3), évaluée sur TROIS PHASES
+    successives (pré-frai, ponte, incubation) aux tolérances thermiques
+    distinctes. Un jour appartenant à deux phases qui se chevauchent reçoit le
+    score le plus contraignant.
 
-    Retourne un dict avec :
-      P_fraie (int 0-3), pct_fraie (float, sous-ind. retenu),
-      sous_indicateurs (liste de dicts par espèce), espece_limitante (str).
-    Si aucun paramètre fraie n'est défini, retourne None.
+    Le score global d'une espèce est calculé sur l'ensemble des jours de sa
+    fenêtre de reproduction, chaque jour étant évalué avec les seuils de sa
+    phase ; le détail par phase est conservé pour l'interprétation.
+
+    Zone cyprinicole : deux sous-indicateurs (brochet + brème), le plus
+    contraignant alimente P_fraie ; les deux sont affichés.
+
+    Retourne un dict (P_fraie, sous_indicateurs, espece_limitante…) ou None.
     """
     params = contexte.get("fraie")
     if not params:
@@ -297,113 +301,136 @@ def analyse_fraie_croissance(df, m_estival, contexte, contexte_key="cyprinicole"
 
     sous = []
     for espece, pr in params.items():
-        mois = pr["fenetre"]
-        mois_c = pr.get("mois_central", mois[len(mois) // 2])
-        opt_min, opt_max = pr["opt"]
-        elargie = pr.get("elargie", pr["opt"])  # repli sur opt si absent
-        elar_min, elar_max = elargie
-        res = pr["res"]
-        _rombough_check(opt_min, opt_max, res, pr["T_fraie"], espece,
-                        pente_key=pr["pente"], verbose=verbose)
+        phases = pr["phases"]
+        froid_bloquant = pr.get("froid_bloquant", False)
+        mois_tous = sorted({m for ph in phases for m in ph["mois"]})
 
-        sub = df[df["month"].isin(mois)].dropna(subset=["Tmh", "Delta_TMm"]).copy()
-
-        # -- Couverture du MOIS CENTRAL (cœur d'incubation) --
-        sub_c = sub[sub["month"] == mois_c]
-        n_central = len(sub_c)
-        # récurrence : nb d'années distinctes couvrant le mois central
-        annees_central = sorted(sub_c["date_dt"].dt.year.unique().tolist()) \
-                         if n_central else []
-        n_annees = len(annees_central)
-        couvert = n_central >= FRAIE_MIN_JOURS_CENTRAL
-
-        if not couvert:
-            # Sous-indicateur NON ÉVALUÉ (chronique lacunaire sur le cœur de fraie)
-            sous.append(dict(espece=espece, evalue=False, pct=np.nan, P=None, n=len(sub),
-                             n_central=n_central, n_annees=n_annees,
-                             cat="Non évalué (mois central lacunaire)",
-                             mois_central=mois_c, opt=[opt_min, opt_max], res=res,
-                             src=pr["src"], fenetre=mois, sev_moy=np.nan,
-                             m_saison=np.nan, m_info=dict(source="non_calcule")))
+        sub = df[df["month"].isin(mois_tous)].dropna(
+            subset=["Tmh", "Delta_TMm"]).copy()
+        if len(sub) == 0:
+            sous.append(dict(espece=espece, evalue=False, P=None,
+                             motif="aucune donnée sur la fenêtre de reproduction",
+                             phases=[], src=pr.get("src", ""),
+                             froid_bloquant=froid_bloquant))
             continue
 
-        # m saisonnier propre à la fenêtre de cette espèce
-        m_s, m_info = _m_saisonnier(df, mois, m_estival, verbose)
+        # coefficient de couplage saisonnier propre à la fenêtre de l'espèce
+        m_s, m_info = _m_saisonnier(df, mois_tous, m_estival, verbose)
         sub["Tmh_norm_fraie"] = sub["Tmh"] - (m_s * sub["Delta_TMm"])
-        # --- Score à 3 paliers sur T° NORMALISÉES ---
-        sev = _severite_fraie(sub["Tmh_norm_fraie"].values,
-                              opt_min, opt_max, elar_min, elar_max)
-        n_tot = len(sev)
-        # % de temps par palier (normalisé)
+
+        # ---- Score journalier : le plus contraignant des phases actives ----
+        sev_glob = np.full(len(sub), np.nan)
+        sev_brut_glob = np.full(len(sub), np.nan)
+        detail_phases = []
+        mois_arr = sub["month"].values
+        tnorm = sub["Tmh_norm_fraie"].values
+        tbrut = sub["Tmh"].values
+
+        for ph in phases:
+            masque = np.isin(mois_arr, ph["mois"])
+            n_ph = int(masque.sum())
+            # couverture du mois central de la phase
+            n_central = int((mois_arr == ph["mois_central"]).sum())
+            annees_c = sorted(sub.loc[mois_arr == ph["mois_central"],
+                                      "date_dt"].dt.year.unique().tolist()) \
+                       if n_central else []
+            couvert = n_central >= FRAIE_MIN_JOURS_CENTRAL
+
+            if n_ph == 0:
+                detail_phases.append(dict(
+                    cle=ph["cle"], nom=ph["nom"], evaluee=False, n=0,
+                    n_central=0, n_annees=0, couvert=False,
+                    opt=ph["opt"], elargie=ph["elargie"], critique=ph["critique"],
+                    note=ph.get("note", ""), mois=ph["mois"]))
+                continue
+
+            # Le froid n'est « bloquant » (échec reproducteur) que sur les
+            # phases critiques : en pré-frai, une eau trop froide décale
+            # simplement le frai (plasticité phénologique) sans le compromettre.
+            froid_bloq_ph = froid_bloquant and ph["critique"]
+            sev_ph = _severite_fraie(tnorm[masque], ph["opt"][0], ph["opt"][1],
+                                     ph["elargie"][0], ph["elargie"][1],
+                                     froid_bloquant=froid_bloq_ph)
+            sev_ph_brut = _severite_fraie(tbrut[masque], ph["opt"][0], ph["opt"][1],
+                                          ph["elargie"][0], ph["elargie"][1],
+                                          froid_bloquant=froid_bloq_ph)
+            # chevauchement : on retient le score le plus contraignant
+            anciens = sev_glob[masque]
+            sev_glob[masque] = np.where(np.isnan(anciens), sev_ph,
+                                        np.maximum(anciens, sev_ph))
+            anciens_b = sev_brut_glob[masque]
+            sev_brut_glob[masque] = np.where(np.isnan(anciens_b), sev_ph_brut,
+                                             np.maximum(anciens_b, sev_ph_brut))
+
+            detail_phases.append(dict(
+                cle=ph["cle"], nom=ph["nom"], evaluee=couvert, n=n_ph,
+                n_central=n_central, n_annees=len(annees_c), couvert=couvert,
+                opt=ph["opt"], elargie=ph["elargie"], critique=ph["critique"],
+                note=ph.get("note", ""), mois=ph["mois"],
+                pct_optimum=100 * (sev_ph == 0).sum() / n_ph,
+                pct_elargie=100 * (sev_ph == FRAIE_SCORE_ELARGIE).sum() / n_ph,
+                pct_letal=100 * (sev_ph == FRAIE_SCORE_LETAL).sum() / n_ph,
+                sev_moy=float(np.nanmean(sev_ph)),
+                pct_optimum_brut=100 * (sev_ph_brut == 0).sum() / n_ph,
+                pct_elargie_brut=100 * (sev_ph_brut == FRAIE_SCORE_ELARGIE).sum() / n_ph,
+                pct_letal_brut=100 * (sev_ph_brut == FRAIE_SCORE_LETAL).sum() / n_ph))
+
+        # ---- Évaluabilité : au moins une phase CRITIQUE couverte ----
+        critiques_ok = [d for d in detail_phases
+                        if d["critique"] and d.get("couvert")]
+        if not critiques_ok:
+            manquantes = ", ".join(d["nom"] for d in detail_phases
+                                   if d["critique"])
+            sous.append(dict(espece=espece, evalue=False, P=None,
+                             motif=f"phases critiques non couvertes ({manquantes})",
+                             phases=detail_phases, src=pr.get("src", ""),
+                             froid_bloquant=froid_bloquant, m_saison=m_s,
+                             m_info=m_info, sub=sub))
+            continue
+
+        # ---- Agrégation globale (tous les jours de la fenêtre) ----
+        valides = ~np.isnan(sev_glob)
+        n_tot = int(valides.sum())
+        sev = sev_glob[valides]; sev_b = sev_brut_glob[valides]
         pct_optimum = 100 * (sev == 0).sum() / n_tot
         pct_elargie = 100 * (sev == FRAIE_SCORE_ELARGIE).sum() / n_tot
-        pct_letal   = 100 * (sev == FRAIE_SCORE_LETAL).sum() / n_tot
-        # % hors optimum = ce qui n'est pas dans l'optimum strict
-        pct = pct_elargie + pct_letal
+        pct_letal = 100 * (sev == FRAIE_SCORE_LETAL).sum() / n_tot
         sev_moy = float(np.mean(sev))
-        # --- % INFO sur T° BRUTES (non compensées) ---
-        sev_brut = _severite_fraie(sub["Tmh"].values,
-                                   opt_min, opt_max, elar_min, elar_max)
-        pct_optimum_brut = 100 * (sev_brut == 0).sum() / n_tot
-        pct_elargie_brut = 100 * (sev_brut == FRAIE_SCORE_ELARGIE).sum() / n_tot
-        pct_letal_brut   = 100 * (sev_brut == FRAIE_SCORE_LETAL).sum() / n_tot
-        pct_brut = pct_elargie_brut + pct_letal_brut
-        # Catégorie : pilotée par la sévérité moyenne (pondère les paliers)
+        pct_optimum_brut = 100 * (sev_b == 0).sum() / n_tot
+        pct_elargie_brut = 100 * (sev_b == FRAIE_SCORE_ELARGIE).sum() / n_tot
+        pct_letal_brut = 100 * (sev_b == FRAIE_SCORE_LETAL).sum() / n_tot
         cat, P = cat_fraie_sev(sev_moy, pct_letal)
-        sous.append(dict(espece=espece, evalue=True, pct=pct, P=P, n=n_tot,
-                         n_central=n_central, n_annees=n_annees, cat=cat,
-                         mois_central=mois_c, m_saison=m_s, m_info=m_info,
-                         opt=[opt_min, opt_max], elargie=[elar_min, elar_max],
-                         res=res, src=pr["src"], fenetre=mois, sev_moy=sev_moy,
-                         sub=sub, sev=sev, pente=pr["pente"],
-                         # paliers normalisés
-                         pct_optimum=pct_optimum, pct_elargie=pct_elargie,
-                         pct_letal=pct_letal,
-                         # paliers bruts (info)
-                         pct_optimum_brut=pct_optimum_brut,
-                         pct_elargie_brut=pct_elargie_brut,
-                         pct_letal_brut=pct_letal_brut, pct_brut=pct_brut))
 
-    # Sous-indicateur le plus contraignant PARMI LES ÉVALUÉS (P puis pct)
-    valides = [s for s in sous if s.get("evalue")]
-    non_eval = [s for s in sous if not s.get("evalue")]
+        sub = sub.copy()
+        sub["sev_fraie"] = sev_glob
+        sous.append(dict(
+            espece=espece, evalue=True, P=P, cat=cat, n=n_tot,
+            pct=pct_elargie + pct_letal, sev_moy=sev_moy,
+            pct_optimum=pct_optimum, pct_elargie=pct_elargie, pct_letal=pct_letal,
+            pct_optimum_brut=pct_optimum_brut, pct_elargie_brut=pct_elargie_brut,
+            pct_letal_brut=pct_letal_brut,
+            pct_brut=pct_elargie_brut + pct_letal_brut,
+            phases=detail_phases, froid_bloquant=froid_bloquant,
+            src=pr.get("src", ""), m_saison=m_s, m_info=m_info,
+            fenetre=mois_tous, sub=sub, sev=sev_glob,
+            n_central=max((d["n_central"] for d in detail_phases), default=0),
+            n_annees=max((d["n_annees"] for d in detail_phases), default=0)))
 
-    if verbose:
-        print(f"  Composante fraie-croissance :")
-        for s in sous:
-            if not s.get("evalue"):
-                print(f"    {s['espece']:14s} : NON ÉVALUÉ — mois central "
-                      f"({s['mois_central']}) couvert {s['n_central']}j "
-                      f"< {FRAIE_MIN_JOURS_CENTRAL}j requis")
-
-    if not valides:
-        # Aucun sous-indicateur évaluable → composante fraie inopérante
         if verbose:
-            print(f"    → composante fraie NON DISPONIBLE (chronique lacunaire) "
-                  f"— SGVT repliera sur 3 composantes")
-        return dict(P_fraie=None, pct_fraie=np.nan, sous_indicateurs=sous,
-                    espece_limitante="—", cat_fraie="Non évalué",
-                    disponible=False)
+            print(f"    {espece} : optimum {pct_optimum:.0f}% / élargie "
+                  f"{pct_elargie:.0f}% / létal {pct_letal:.0f}% → P={P}")
 
-    limitant = max(valides, key=lambda s: (s["P"], s["pct"]))
+    evalues = [s for s in sous if s.get("evalue")]
+    if not evalues:
+        return dict(disponible=False, sous_indicateurs=sous, P_fraie=None,
+                    espece_limitante=None)
 
-    if verbose:
-        for s in valides:
-            flag = " ★" if s is limitant else ""
-            rec = f", {s['n_annees']} an(s)" if s['n_annees'] else ""
-            print(f"    {s['espece']:14s} : {s['pct']:5.1f}% hors optimum "
-                  f"[{s['opt'][0]}–{s['opt'][1]}°C] → P={s['P']} ({s['cat']}"
-                  f"{rec}){flag}")
+    limitant = max(evalues, key=lambda s: s["P"])
+    return dict(disponible=True, sous_indicateurs=sous,
+                P_fraie=limitant["P"], pct_fraie=limitant["pct"],
+                cat_fraie=limitant["cat"], espece_limitante=limitant["espece"],
+                n_annees=limitant.get("n_annees", 0))
 
-    return dict(P_fraie=limitant["P"], pct_fraie=limitant["pct"],
-                sous_indicateurs=sous, espece_limitante=limitant["espece"],
-                cat_fraie=limitant["cat"], disponible=True,
-                n_annees=limitant["n_annees"])
-
-
-# ============================================================
-# ÉTAPE 3 — SGVT (note §2.6, 4 composantes)
-# ============================================================
 def calcul_sgvt(sens_res, vul_res, fraie_res=None):
     """
     SGVT à 4 composantes pondérées (note §2.6 V2) :

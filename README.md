@@ -13,65 +13,57 @@ Python modulaire.
 - Contrôle qualité, sensibilité, vulnérabilité, fraie-croissance, SGVT.
 - **Onglet Indicateurs** : Tmax/Tmin (avec dates), amplitude nycthémérale,
   Tmm30j — bruts et compensés — + 4 corrélations avec R².
-- **Onglet Relation Q–T°** : test préalable du postulat fondateur (voir plus bas).
+- **Onglet Relation Q–T°** : test préalable du postulat fondateur.
 - **Coupure des lacunes** : pas de raccord à travers les trous de mesure.
 
-## Test préalable — le débit module-t-il la température ?
-Toute l'approche « débits thermiques » repose sur un postulat : le débit pilote
-la température de l'eau. Un onglet dédié le vérifie avant les débits, avec deux
-mesures et trois gammes de débit :
+## Fraie-croissance — trois phases, trois tolérances
 
-- **corrélation brute** — inclut l'effet structurel du régime d'étiage ;
-- **corrélation partielle à température d'air égale** — isole le rôle propre du
-  débit ; robuste même sur une seule saison (elle n'exige pas de répétitions
-  inter-annuelles, contrairement à un contrôle par le calendrier qui, sur une
-  seule année, effacerait le signal en même temps que le confondant).
+Chaque espèce repère est évaluée sur **trois phases successives** dont les
+exigences thermiques diffèrent. Un jour appartenant à deux phases qui se
+chevauchent reçoit le score le plus contraignant. Le score global porte sur
+l'ensemble de la fenêtre ; le détail par phase est restitué.
 
-Les gammes (toute la gamme, sous la médiane, quart inférieur) révèlent les
-**effets de seuil** : une relation qui se renforce vers les bas débits malgré la
-réduction de variance signale une perte d'inertie thermique concentrée en
-étiage.
+| Espèce | Pré-frai | Ponte ★ | Incubation ★ |
+|---|---|---|---|
+| **Truite fario** (oct→mars) | oct–nov · 1–10 °C | nov–janv · 4–8 °C | déc–mars · 4–8 °C |
+| **Ombre commun** (mars→mai) | mars · 5–9 °C | mars–avr · 7–10 °C | avr–mai · 6–10 °C |
+| **Brochet** (févr→avr) | févr · 4–7 °C | févr–mars · 7–11 °C | mars–avr · 8–12 °C |
+| **Brème** (avr→juil) | avr–mai · 12–16 °C | mai–juin · 15–20 °C | juin–juil · 16–21 °C |
 
-Le verdict est gradué — *établie*, *faible*, *absente*, *inversée* — et reste
-**informatif** : aucun calcul n'est interrompu, mais une réserve explicite est
-affichée dans l'onglet Débits lorsque la relation n'est pas établie.
+★ phases critiques : au moins une doit être couverte pour que le sous-indicateur
+soit évalué.
 
-## Fraie-croissance — pondération à 3 niveaux
-Score journalier sur **températures normalisées** (les % sur températures
-brutes sont affichés pour information) :
+**Pondération à trois paliers** (sur températures normalisées ; les % sur
+températures brutes sont affichés pour information) : optimum strict → aucune
+pénalité ; tolérance élargie → pénalité intermédiaire ; au-delà → pénalité forte.
 
-| Zone | Pénalité |
-|---|---|
-| Optimum strict | aucune (0) |
-| Fenêtre élargie, non létale | intermédiaire (1) |
-| Au-delà, côté chaud (létalité embryonnaire) | forte (3) |
-
-| Espèce | Optimum | Élargie |
-|---|---|---|
-| Truite fario | 6–8 °C | 4–10 °C |
-| Ombre commun | 6–8 °C | 6–10 °C |
-| Brochet | 8–14 °C | 8–15 °C |
-| Brème | 12–21 °C | 12–23 °C |
-
-Côté froid, la pénalité est plafonnée au palier intermédiaire (le froid ralentit
-l'incubation sans létalité massive).
+**Traitement du froid.** Côté chaud, dépasser la tolérance élargie signifie
+létalité embryonnaire. Côté froid, deux situations biologiques distinctes :
+- *truite* (pondeur automnal) — le froid **ralentit** l'incubation sans mortalité
+  massive : pénalité plafonnée au palier intermédiaire ;
+- *ombre, brochet, brème* (pondeurs printaniers et estivaux) — le froid **bloque**
+  la reproduction (refus de frayer, atrésie folliculaire chez la brème) : échec
+  reproducteur, pénalité forte. Ce blocage ne s'applique qu'aux phases critiques,
+  car en pré-frai une eau froide décale simplement le frai sans le compromettre.
 
 **Classement** : maximum entre le classement par sévérité moyenne
-(seuils 0,22 / 1,05 / 1,75) et par temps en zone létale (2 % / 6 % / 15 %),
-afin que la létalité ne soit jamais diluée par une bonne moyenne. Repères :
-≥ 75 % du temps dans l'optimum → P0 ; 100 % en fenêtre élargie sans létalité
-→ P1 ; ≥ 6 % de létalité → P2 ; ≥ 15 % → P3.
+(0,22 / 1,05 / 1,75) et par temps en zone létale (2 % / 6 % / 15 %).
+
+Sources : Elliott & Hurley (1998), Réalis-Doyelle et al. (2016), Crisp (1993) ·
+Jungwirth & Winkler (1984), Humpesch (1985) · Hokanson et al. (1973), Bry (1996) ·
+Herzig & Winkler (1986), Poncin et al. (1996), Sych et al. (1999).
+
+## Test préalable — le débit module-t-il la température ?
+Deux mesures — corrélation **brute** et **partielle à température d'air égale**
+(robuste même sur une seule saison) — déclinées sur trois gammes de débit pour
+détecter les effets de seuil. Verdict gradué (établie / faible / absente /
+inversée), **informatif** : aucun calcul n'est interrompu, mais une réserve
+explicite s'affiche dans l'onglet Débits.
 
 ## Q_thermie_bio — déclenchement
-- **Volet létal** = déclencheur principal (fiable, relié aux bas débits).
-- **Volet stress chronique** = retenu **seulement** si deux conditions
-  cumulatives sont réunies : *matérialité* (% de jours estivaux stressés
-  au-dessus d'un plancher paramétrable, 10 % par défaut) et *causalité*
-  (corrélation négative concluante, brute ou partielle).
-
-Faute de quoi, agir sur le débit ne réduirait pas le stress : le volet est
-écarté avec sa raison, et Q_thermie_bio repose sur le seul volet létal — ou
-devient non applicable. La courbe stress/débit reste affichée en diagnostic.
+- **Volet létal** = déclencheur principal.
+- **Volet stress chronique** = retenu seulement si le stress est matériel
+  (plancher paramétrable) **et** réellement piloté par le débit.
 
 ## Sorties débits
 Une **valeur brute** (base de calcul retenue) et son **PNDA** lu sur chaque
@@ -82,8 +74,9 @@ distribution — désinfluencé prioritaire, influencé en secondaire.
 pip install -r requirements.txt
 streamlit run app.py
 ```
-Exemples dans `examples/` (CSV, Excel, débits influencé et désinfluencé).
-En CLI : éditer `run_cli.py` puis `python run_cli.py`.
+Exemples dans `examples/` (chroniques **annuelles**, nécessaires pour couvrir
+les trois phases de reproduction). En CLI : éditer `run_cli.py` puis
+`python run_cli.py`.
 
 ## Déploiement Streamlit Cloud
 GitHub → https://share.streamlit.io → fichier `app.py`, branche `main`.
