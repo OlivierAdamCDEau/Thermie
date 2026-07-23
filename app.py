@@ -9,6 +9,7 @@ Lancement : streamlit run app.py
 """
 import io
 import tempfile
+import pandas as pd
 import streamlit as st
 
 from thermie_debits.config import AnalyseConfig, SourcesConfig, QCConfig, CONTEXTES
@@ -73,6 +74,20 @@ if mode == "thermie_debits":
         "Seuil comblement désinfluencé (écart médian max)", 0.0, 0.30, 0.10, 0.01,
         help="Sous ce seuil, les trous du désinfluencé sont comblés par "
              "l'influencé. Au-dessus, bascule en base influencée.")
+    with st.sidebar.expander("🎚️ Déclenchement du volet stress (avancé)"):
+        st.caption("Le volet létal déclenche toujours Q_thermie_bio. Le volet "
+                   "stress chronique n'est retenu que si le stress est matériel "
+                   "ET réellement piloté par le débit.")
+        stress_plancher = st.slider("Plancher de matérialité (% jours stressés)",
+                                    0.0, 40.0, 10.0, 1.0,
+                                    help="En deçà, le milieu ne révèle pas de "
+                                         "vulnérabilité chronique : volet écarté.")
+        stress_r2 = st.slider("R² minimal de la relation débit↔température",
+                              0.0, 0.60, 0.10, 0.01,
+                              help="La corrélation doit aussi être négative "
+                                   "(l'eau chauffe quand le débit baisse).")
+else:
+    stress_plancher, stress_r2 = 10.0, 0.10
 
 st.sidebar.header("3. Métadonnées")
 nom_ce = st.sidebar.text_input("Nom du cours d'eau", "Cours d'eau")
@@ -203,7 +218,9 @@ if lancer:
                         mode=mode, faire_volet_climatique=faire_clim,
                         seuil_comblement_desinf=seuil_comblement,
                         normales_fenetre_lissage=norm_fenetre,
-                        normales_min_annees=norm_min_ans, output_dir=None)
+                        normales_min_annees=norm_min_ans,
+                        stress_plancher_pct=stress_plancher,
+                        stress_corr_r2_min=stress_r2, output_dir=None)
     with st.spinner("Analyse en cours..."):
         try:
             res = run(cfg, verbose=False)
@@ -245,6 +262,7 @@ elif dn.get("source"):
 noms = ["📊 Synthèse", "🧹 QC", "📈 Sensibilité", "🌡️ Vulnérabilité", "🐟 Fraie",
         "📉 Indicateurs"]
 if res.config.avec_debits:
+    noms.append("🔗 Relation Q–T°")
     noms.append("💧 Débits")
 if res.figures_climatiques:
     noms.append("🌍 Climatique")
@@ -300,16 +318,42 @@ with ong[4]:
         st.metric("P_fraie", fr["P_fraie"],
                   f"repère : {fr['espece_limitante']} ({fr.get('n_annees','?')} an)")
     if fr:
+        st.caption("Pondération à 3 niveaux : optimum strict (aucune pénalité), "
+                   "fenêtre élargie non létale (pénalité intermédiaire), au-delà "
+                   "= létalité embryonnaire (pénalité forte). Calculs sur "
+                   "**températures normalisées**.")
         rows = []
         for si in fr.get("sous_indicateurs", []):
+            ev = si.get("evalue")
             rows.append(dict(
                 Espèce=si["espece"],
-                Statut="évalué" if si.get("evalue") else "non évalué",
-                **{"% hors optimum": f"{si['pct']:.1f}" if si.get("evalue") else "—"},
+                Statut="évalué" if ev else "non évalué",
+                Optimum=(f"{si['opt'][0]}–{si['opt'][1]}°C" if ev else "—"),
+                Élargie=(f"{si['elargie'][0]}–{si['elargie'][1]}°C"
+                         if ev and si.get("elargie") else "—"),
+                **{"% optimum": f"{si['pct_optimum']:.0f}" if ev else "—"},
+                **{"% élargie": f"{si['pct_elargie']:.0f}" if ev else "—"},
+                **{"% létal": f"{si['pct_letal']:.0f}" if ev else "—"},
+                **{"Sévérité moy.": f"{si['sev_moy']:.2f}" if ev else "—"},
                 **{"Mois central (j)": si.get("n_central", "—")},
                 **{"Années": si.get("n_annees", "—")},
                 Catégorie=si.get("cat", "—")))
         st.dataframe(rows, use_container_width=True)
+
+        # Températures BRUTES (non compensées) — information seulement
+        rows_brut = [r for r in
+                     [dict(Espèce=si["espece"],
+                           **{"% optimum (brut)": f"{si['pct_optimum_brut']:.0f}"},
+                           **{"% élargie (brut)": f"{si['pct_elargie_brut']:.0f}"},
+                           **{"% létal (brut)": f"{si['pct_letal_brut']:.0f}"})
+                      for si in fr.get("sous_indicateurs", []) if si.get("evalue")]]
+        if rows_brut:
+            with st.expander("🌡️ Températures brutes non compensées (information)"):
+                st.caption("Ces valeurs n'entrent pas dans le score. Elles "
+                           "montrent ce qu'ont réellement subi les stades "
+                           "précoces sur la période observée, sans "
+                           "normalisation climatique.")
+                st.dataframe(rows_brut, use_container_width=True)
     if res.figures.get("fraie") is not None:
         st.pyplot(res.figures["fraie"])
 
@@ -345,10 +389,82 @@ if "📉 Indicateurs" in noms and res.indicateurs is not None:
                      for c in cors.values() if c.get("n", 0) >= 5]
             st.dataframe(recap, use_container_width=True)
 
+# Relation débit ↔ température (test préalable)
+if "🔗 Relation Q–T°" in noms:
+    with ong[noms.index("🔗 Relation Q–T°")]:
+        rel = res.relation_debit_temp
+        st.subheader("Le débit module-t-il la température de l'eau ?")
+        st.caption("Postulat fondateur de l'approche « débits thermiques » : "
+                   "si le débit ne pilote pas la température, agir sur le débit "
+                   "n'améliorera pas la situation thermique. Ce test est "
+                   "**informatif** — il n'interrompt aucun calcul, mais qualifie "
+                   "la portée des débits obtenus.")
+        if not rel or not rel.get("disponible"):
+            st.info(rel.get("message", "Test non réalisable.") if rel
+                    else "Test non réalisable.")
+        else:
+            couleurs = {"etablie": st.success, "faible": st.warning,
+                        "absente": st.warning, "inversee": st.error}
+            couleurs.get(rel["verdict"], st.info)(
+                f"**{rel['libelle']}** — {rel['commentaire']}")
+
+            st.markdown("**Corrélations par gamme de débit**")
+            st.caption("La corrélation *brute* inclut l'effet structurel du "
+                       "régime d'étiage ; la corrélation *partielle* isole le "
+                       "rôle propre du débit, à température d'air égale.")
+            lignes = []
+            for l in rel["lignes"]:
+                lignes.append({
+                    "Gamme de débit": l["gamme"],
+                    "n (jours)": l["n"],
+                    "r brute": f"{l['r_brute']:+.3f}" if l["r_brute"] == l["r_brute"] else "—",
+                    "R² brute": f"{l['r2_brute']:.3f}" if l["r2_brute"] == l["r2_brute"] else "—",
+                    "r partielle": f"{l['r_partielle']:+.3f}" if l["r_partielle"] == l["r_partielle"] else "—",
+                    "R² partielle": f"{l['r2_partielle']:.3f}" if l["r2_partielle"] == l["r2_partielle"] else "—",
+                    "Concluante": "oui" if l["concluante"] else "non"})
+            st.dataframe(lignes, use_container_width=True)
+
+            # Lecture automatique de la tendance par gamme (effet de seuil)
+            r2s = [l["r2_partielle"] for l in rel["lignes"]
+                   if l["r2_partielle"] == l["r2_partielle"]]
+            if len(r2s) == 3:
+                if r2s[2] > r2s[0] * 1.15:
+                    st.info("📈 La relation **se renforce vers les bas débits** "
+                            "malgré la réduction de la gamme : signature d'un "
+                            "effet de seuil, l'inertie thermique se perdant "
+                            "surtout en étiage prononcé.")
+                elif r2s[2] < r2s[0] * 0.6:
+                    st.info("📉 La relation **s'affaiblit vers les bas débits**. "
+                            "Une part est attribuable à la réduction de variance, "
+                            "mais cela peut aussi signaler que l'effet observé "
+                            "sur toute la gamme relève surtout de la covariation "
+                            "saisonnière.")
+
+            if res.figures.get("relation_debit_temp") is not None:
+                st.pyplot(res.figures["relation_debit_temp"])
+                _fig_download(res.figures["relation_debit_temp"],
+                              "⬇️ PNG relation Q–T°", "Relation_Q_T.png")
+
+            st.download_button(
+                "⬇️ Corrélations (CSV)",
+                pd.DataFrame(lignes).to_csv(index=False, sep=";",
+                                            decimal=",").encode("utf-8-sig"),
+                "relation_debit_temperature.csv", "text/csv")
+
 # Débits
 if res.config.avec_debits and "💧 Débits" in noms:
     with ong[noms.index("💧 Débits")]:
         ds = res.debits_sorties
+        # Réserve méthodologique si la relation débit–température n'est pas établie
+        _rel = res.relation_debit_temp
+        if _rel and _rel.get("disponible") and _rel.get("verdict") != "etablie":
+            _f = {"faible": st.warning, "absente": st.warning,
+                  "inversee": st.error}.get(_rel["verdict"], st.info)
+            _f(f"⚠️ **Réserve méthodologique — {_rel['libelle'].lower()}.** "
+               f"{_rel['commentaire']} Les débits ci-dessous restent calculés, "
+               f"mais leur portée opérationnelle doit être appréciée à la "
+               f"lumière de ce constat (voir l'onglet « Relation Q–T° »).")
+
         st.subheader("Débits de référence — station de rattachement")
         if res.config.sources.nom_station_debit:
             st.caption(f"Station : {res.config.sources.nom_station_debit}")
@@ -380,6 +496,49 @@ if res.config.avec_debits and "💧 Débits" in noms:
         _afficher_debit("q_thermie_bio", "Q_thermie_bio — résultat principal")
         st.divider()
         _afficher_debit("q_thermie_fonc", "Q_thermie_fonc — information complémentaire")
+
+        # Diagnostic du volet stress (déclenché ou écarté, et pourquoi)
+        di = res.debits_inflexion or {}
+        dstr = di.get("diag_stress")
+        if dstr:
+            st.divider()
+            st.subheader("Volet stress chronique — diagnostic de déclenchement")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Stress estival global",
+                      f"{dstr['pct_stress_global']:.1f} %",
+                      f"plancher {dstr['plancher']:.0f} %",
+                      delta_color="off")
+            rp = dstr.get("r_partielle")
+            rb = dstr.get("r_qt")
+            c2.metric("Corrélation débit ↔ T° (à air égal)",
+                      f"{rp:+.2f}" if (rp is not None and rp == rp) else "—",
+                      f"R² = {dstr['r2_partielle']:.2f}"
+                      if dstr.get("r2_partielle") == dstr.get("r2_partielle") else "—",
+                      delta_color="off",
+                      help="Corrélation partielle : effet du débit sur la "
+                           "température de l'eau à forçage atmosphérique égal. "
+                           "Robuste même sur une seule saison.")
+            c3.metric("Volet stress",
+                      "retenu" if dstr["stress_actif"] else "écarté")
+            def _f(v):
+                return f"{v:+.2f}" if (v is not None and v == v) else "n.d."
+            st.caption(
+                f"Corrélation brute = {_f(rb)} "
+                f"(R²={dstr.get('r2_qt', float('nan')):.2f}, "
+                f"{'concluante' if dstr.get('causal_brut') else 'non concluante'}) · "
+                f"partielle à air égal = {_f(rp)} "
+                f"(R²={dstr.get('r2_partielle', float('nan')):.2f}, "
+                f"{'concluante' if dstr.get('causal_partielle') else 'non concluante'}). "
+                f"Le verrou s'ouvre si l'une des deux est concluante.")
+            if dstr["stress_actif"]:
+                st.success("Les deux conditions sont réunies (stress matériel et "
+                           "réellement piloté par le débit) : le volet stress "
+                           "contribue à Q_thermie_bio.")
+            else:
+                st.info(f"Volet stress écarté — {dstr['raison']}. "
+                        f"Q_thermie_bio repose sur le seul volet létal "
+                        f"(ou devient non applicable). Agir sur le débit ne "
+                        f"réduirait pas significativement le stress observé.")
 
         st.divider()
         for k, t in [("debits_vuln", "Q_thermie_bio — vulnérabilité vs débit"),

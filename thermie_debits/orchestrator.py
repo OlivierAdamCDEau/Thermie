@@ -35,6 +35,7 @@ class Resultats:
     daily_eau_brut: Any = None
     sub_eau: Any = None
     indicateurs: Any = None
+    relation_debit_temp: Any = None
     df_air: Any = None
     df: Any = None
     rapport_qc: Any = None
@@ -160,10 +161,30 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
     F["correlations"] = figmod.fig_correlations_indicateurs(
         res.indicateurs["correlations"], nom, out)
 
+    # ---- 6ter. Test PRÉALABLE : le débit module-t-il la température ? ----
+    # Postulat fondateur de toute l'approche « débits thermiques ». Le verdict
+    # est informatif : il n'interrompt aucun calcul, mais une réserve est
+    # affichée en aval si la relation n'est pas établie.
+    if config.avec_debits:
+        res.relation_debit_temp = core.analyse_relation_debit_temperature(
+            df, r2_min=getattr(config, "stress_corr_r2_min", 0.10),
+            verbose=verbose)
+        F["relation_debit_temp"] = figmod.fig_relation_debit_temperature(
+            res.relation_debit_temp, nom, out)
+        rdt = res.relation_debit_temp
+        if rdt.get("disponible") and rdt.get("verdict") in ("faible", "absente",
+                                                            "inversee"):
+            res.avertissements.append(
+                f"Relation débit–température : {rdt['libelle'].lower()}. "
+                f"{rdt['commentaire']}")
+
     # ---- 7. Débits de référence (si mode + fichier) ----
     if config.avec_debits:
         if verbose: print("\nÉtape 4 — Débits de référence...")
-        dinf = core.analyse_debits_inflexion(df, sens, ctx, config.contexte_piscicole)
+        dinf = core.analyse_debits_inflexion(
+            df, sens, ctx, config.contexte_piscicole,
+            stress_plancher_pct=getattr(config, "stress_plancher_pct", None),
+            stress_corr_r2_min=getattr(config, "stress_corr_r2_min", None))
         res.debits_inflexion = dinf
         if dinf and dinf.get("valide"):
             q_vuln = dinf.get("q_vuln") if dinf.get("q_vuln_valide") else None

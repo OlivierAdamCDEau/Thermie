@@ -212,36 +212,41 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
         from .core import inserer_lacunes
         sub = inserer_lacunes(sub, col_date="date_dt",
                               cols_valeurs=["Tmh_norm_fraie"], seuil_pas=3)
-        opt_min, opt_max = s["opt"]; res = s["res"]
+        opt_min, opt_max = s["opt"]
+        elar_min, elar_max = s.get("elargie", s["opt"])
         limitant = (s["espece"] == fraie_res["espece_limitante"])
-        # bande optimale
-        ax.axhspan(opt_min, opt_max, alpha=0.15, color="#27ae60", zorder=0,
+        # 3 zones : optimum (vert), élargie non létale (jaune), au-delà = létal
+        ax.axhspan(opt_min, opt_max, alpha=0.18, color="#27ae60", zorder=0,
                    label=f"Optimum {opt_min}–{opt_max}°C")
-        ax.axhline(res, color="#c0392b", lw=1.8, ls="--", zorder=2,
-                   label=f"Résistance haute {res:.0f}°C")
+        ax.axhspan(opt_max, elar_max, alpha=0.15, color="#F4D03F", zorder=0,
+                   label=f"Élargie {elar_min}–{elar_max}°C (non létal)")
+        if elar_min < opt_min:
+            ax.axhspan(elar_min, opt_min, alpha=0.15, color="#F4D03F", zorder=0)
+        ax.axhline(elar_max, color="#c0392b", lw=1.8, ls="--", zorder=2,
+                   label=f"Seuil létal (>{elar_max:.0f}°C)")
         # chronique normalisée
         ax.plot(sub["date_dt"], sub["Tmh_norm_fraie"], color="#2471A3", lw=1.6,
                 zorder=3, label="Tmh normalisée (m_saison)")
-        # zones d'écart (chaud et froid)
-        ax.fill_between(sub["date_dt"], opt_max, sub["Tmh_norm_fraie"],
-                        where=sub["Tmh_norm_fraie"] > opt_max, alpha=0.30,
-                        color="#e67e22", zorder=1, label="Écart chaud (pénalisé)")
-        ax.fill_between(sub["date_dt"], opt_min, sub["Tmh_norm_fraie"],
-                        where=sub["Tmh_norm_fraie"] < opt_min, alpha=0.30,
-                        color="#5DADE2", zorder=1, label="Écart froid (pénalisé)")
+        # surligner les jours en zone létale (au-dessus de l'élargie côté chaud)
+        ax.fill_between(sub["date_dt"], elar_max, sub["Tmh_norm_fraie"],
+                        where=sub["Tmh_norm_fraie"] > elar_max, alpha=0.35,
+                        color="#e74c3c", zorder=1, label="Zone létale")
         fen = " ".join(mois_noms[m] for m in s["fenetre"])
         src_m = s["m_info"]["source"]
         titre = (f"{s['espece'].capitalize()} — fenêtre {fen}"
-                 f"  |  {s['pct']:.1f}% hors optimum → P={s['P']} ({s['cat']})"
+                 f"  |  optimum {s.get('pct_optimum', 0):.0f}% · "
+                 f"élargie {s.get('pct_elargie', 0):.0f}% · "
+                 f"létal {s.get('pct_letal', 0):.0f}% → P={s['P']} ({s['cat']})"
                  f"{'  ★ retenu' if limitant else ''}")
-        ax.set_title(titre, fontsize=11, fontweight="bold",
+        ax.set_title(titre, fontsize=10.5, fontweight="bold",
                      color="#1A5276" if limitant else "#555555")
         ax.set_ylabel("Tmh normalisée (°C)", fontsize=10)
         ax.legend(fontsize=8, loc="upper right", ncol=2, framealpha=0.9)
         ax.grid(True, alpha=0.3)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %y"))
         info = (f"m_saison={s['m_saison']:.3f} ({src_m})\n"
-                f"pente sévérité : {s['pente']}\nsévérité moy. = {s['sev_moy']:.2f}")
+                f"sévérité moy. = {s['sev_moy']:.2f}\n"
+                f"[info] brut hors opt. = {s.get('pct_brut', float('nan')):.0f}%")
         ax.text(0.01, 0.97, info, transform=ax.transAxes, fontsize=8,
                 va="top", ha="left",
                 bbox=dict(boxstyle="round,pad=0.4", facecolor="#FEF9E7",
@@ -484,6 +489,23 @@ def fig_vulnerabilite_debit(debit_res, contexte, nom, output_dir, q_bio_final=No
         ax1.axvline(q_vuln_chr, color="#c0392b", lw=2.5, ls="-", zorder=5,
                     label=f"Q*_vuln_stress = {q_vuln_chr:.3f} m³/s")
         ax1.axvspan(0, q_vuln_chr, alpha=0.06, color="#c0392b", zorder=0)
+    # Volet stress désactivé : le signaler explicitement sur la figure
+    ds = debit_res.get("diag_stress", {})
+    if ds and not ds.get("stress_actif", True):
+        def _f(v):
+            return f"{v:+.2f}" if (v is not None and v == v) else "n.d."
+        txt = (f"⚠ VOLET STRESS NON RETENU\n"
+               f"stress global = {ds.get('pct_stress_global', float('nan')):.1f}% "
+               f"(plancher {ds.get('plancher', 0):.0f}%)\n"
+               f"corr. brute Q↔T° = {_f(ds.get('r_qt'))} "
+               f"(R²={ds.get('r2_qt', float('nan')):.2f})\n"
+               f"corr. partielle (à air égal) = {_f(ds.get('r_partielle'))} "
+               f"(R²={ds.get('r2_partielle', float('nan')):.2f})\n"
+               f"→ courbe affichée à titre de diagnostic seulement")
+        ax1.text(0.98, 0.97, txt, transform=ax1.transAxes, fontsize=8.5,
+                 va="top", ha="right", color="#7B241C",
+                 bbox=dict(boxstyle="round,pad=0.5", facecolor="#FDEDEC",
+                           edgecolor="#C0392B", alpha=0.95))
     ax1.set_ylabel(f"% jours Tmh_norm > {seuil_chr}°C", fontsize=11)
     ax1.set_title("Vulnérabilité chronique en fonction du débit (stress systémique · Tmh normalisée)",
                   fontsize=11, fontweight="bold")
@@ -604,3 +626,82 @@ def fig_correlations_indicateurs(correlations, nom, output_dir):
                  fontsize=13, fontweight="bold", y=1.005)
     plt.tight_layout()
     return _finalise(fig, output_dir, "Fig_Correlations_Indicateurs.png")
+
+
+def fig_relation_debit_temperature(rel, nom, output_dir):
+    """
+    Test préalable : le débit module-t-il la température de l'eau ?
+    Panneau gauche  : nuage T°eau ~ débit, coloré par la T° de l'air (rend
+                      visible la confusion des deux forçages).
+    Panneau droit   : résidus partiels (à T° d'air égale) avec droite de
+                      régression — c'est la démonstration du lien propre au débit.
+    """
+    if not rel or not rel.get("disponible"):
+        return None
+    d = rel["data"].dropna(subset=["Q", "Teau"])
+    if len(d) < 10:
+        return None
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.6))
+    fig.patch.set_facecolor("white")
+    couleurs_verdict = {"etablie": "#1E8449", "faible": "#B9770D",
+                        "absente": "#7F8C8D", "inversee": "#C0392B"}
+    col = couleurs_verdict.get(rel["verdict"], "#333333")
+
+    # --- Panneau 1 : nuage brut coloré par la température de l'air ---
+    ax1.set_facecolor("#f8f9fa")
+    has_air = d["T_air"].notna().sum() > 5
+    if has_air:
+        sc = ax1.scatter(d["Q"], d["Teau"], c=d["T_air"], cmap="coolwarm",
+                         s=18, alpha=0.75, edgecolors="none")
+        cb = fig.colorbar(sc, ax=ax1, pad=0.02)
+        cb.set_label("T° air (°C)", fontsize=9)
+    else:
+        ax1.scatter(d["Q"], d["Teau"], s=18, alpha=0.6, color="#2471A3")
+    for b, style, lab in [(rel["mediane"], "--", "médiane"),
+                          (rel["q25"], ":", "quart inf.")]:
+        ax1.axvline(b, color="#566573", lw=1.2, ls=style, alpha=0.8,
+                    label=f"{lab} ({b:.3f})")
+    ax1.set_xlabel("Débit Q (m³/s)", fontsize=10)
+    ax1.set_ylabel("Température de l'eau (°C)", fontsize=10)
+    ax1.set_title("Relation observée (couleur = forçage atmosphérique)",
+                  fontsize=10.5, fontweight="bold")
+    ax1.legend(fontsize=8); ax1.grid(True, alpha=0.3)
+
+    # --- Panneau 2 : résidus partiels (à T° d'air égale) ---
+    ax2.set_facecolor("#f8f9fa")
+    ligne_g = rel["lignes"][0]
+    rp = ligne_g["r_partielle"]
+    if has_air and np.isfinite(rp):
+        m = d["T_air"].notna() & (d["Q"] > 0)
+        lq = np.log(d.loc[m, "Q"].values + 0.05)
+        ta = d.loc[m, "T_air"].values
+        tw = d.loc[m, "Teau"].values
+        deg = 3 if m.sum() >= 40 else 1
+        rq = lq - np.polyval(np.polyfit(ta, lq, deg), ta)
+        rt = tw - np.polyval(np.polyfit(ta, tw, deg), ta)
+        ax2.scatter(rq, rt, s=18, alpha=0.6, color=col, edgecolors="none")
+        if len(rq) > 5:
+            sl, ic = np.polyfit(rq, rt, 1)
+            xs = np.linspace(rq.min(), rq.max(), 60)
+            ax2.plot(xs, sl * xs + ic, color=col, lw=2.2)
+        ax2.axhline(0, color="#95a5a6", lw=0.8)
+        ax2.axvline(0, color="#95a5a6", lw=0.8)
+        ax2.set_xlabel("Débit — résidu à T° d'air égale (log Q)", fontsize=10)
+        ax2.set_ylabel("T° eau — résidu à T° d'air égale (°C)", fontsize=10)
+        ax2.set_title(f"Effet propre du débit  |  r = {rp:+.3f} "
+                      f"(R² = {ligne_g['r2_partielle']:.3f})",
+                      fontsize=10.5, fontweight="bold", color=col)
+    else:
+        ax2.text(0.5, 0.5, "Température de l'air indisponible :\n"
+                           "corrélation partielle non calculable",
+                 ha="center", va="center", transform=ax2.transAxes, fontsize=10,
+                 color="#7F8C8D")
+        ax2.set_xticks([]); ax2.set_yticks([])
+    ax2.grid(True, alpha=0.3)
+
+    plt.suptitle(f"{nom} — Le débit module-t-il la température de l'eau ?\n"
+                 f"{rel['libelle']}", fontsize=12.5, fontweight="bold",
+                 color=col, y=1.02)
+    plt.tight_layout()
+    return _finalise(fig, output_dir, "Fig_Relation_Debit_Temperature.png")

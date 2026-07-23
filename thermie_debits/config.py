@@ -103,21 +103,25 @@ class QCConfig:
 #   pente : sévérité de pénalisation ('forte' sténotherme, 'moderee', 'faible')
 FRAIE_PARAMS = {
     "salmonicole": {
-        "truite fario": dict(fenetre=[10, 11, 12], mois_central=11, opt=[6, 8],
-                             res=10.0, T_fraie=8.0, pente="forte",
+        "truite fario": dict(fenetre=[10, 11, 12], mois_central=11,
+                             opt=[6, 8], elargie=[4, 10], res=10.0,
+                             T_fraie=8.0, pente="forte",
                              src="Réalis-Doyelle & Teletchea 2016"),
     },
     "intermediaire": {
-        "ombre commun": dict(fenetre=[3, 4, 5], mois_central=4, opt=[6, 8],
-                             res=10.0, T_fraie=8.0, pente="forte",
+        "ombre commun": dict(fenetre=[3, 4, 5], mois_central=4,
+                             opt=[6, 8], elargie=[6, 10], res=10.0,
+                             T_fraie=8.0, pente="forte",
                              src="Rosenau 2025"),
     },
     "cyprinicole": {
-        "brochet": dict(fenetre=[2, 3, 4], mois_central=3, opt=[8, 14],
-                        res=22.0, T_fraie=11.0, pente="faible",
+        "brochet": dict(fenetre=[2, 3, 4], mois_central=3,
+                        opt=[8, 14], elargie=[8, 15], res=22.0,
+                        T_fraie=11.0, pente="faible",
                         src="Souchon & Tissot 2012 ; Réalis-Doyelle & Teletchea 2022"),
-        "brème":   dict(fenetre=[5, 6], mois_central=6, opt=[12, 20],
-                        res=23.0, T_fraie=20.0, pente="moderee",
+        "brème":   dict(fenetre=[5, 6], mois_central=6,
+                        opt=[12, 21], elargie=[12, 23], res=23.0,
+                        T_fraie=20.0, pente="moderee",
                         src="Souchon & Tissot 2012 ; Kucharczyk 2013"),
     },
 }
@@ -150,6 +154,34 @@ FACTEUR_RESISTANCE = 2.0          # renfort au-delà de la borne de résistance
 ROMBOUGH_DELTA = 6.0              # garde-fou ±6°C (sténothermes uniquement)
 FRAIE_MIN_JOURS_CENTRAL = 10      # couverture min du mois central (note §2.7.3)
 
+# Pondération fraie à 3 niveaux (score journalier de sévérité) :
+#   - dans l'optimum strict           → 0 (pas de pénalité)
+#   - fenêtre élargie (hors optimum)  → pénalité intermédiaire
+#   - au-delà de l'élargie (létal)    → pénalité forte
+# Côté froid, on plafonne à la pénalité intermédiaire (le froid ralentit
+# l'incubation sans létalité massive ; la létalité forte est réservée au chaud).
+FRAIE_SCORE_ELARGIE = 1.0         # palier intermédiaire (fenêtre élargie)
+FRAIE_SCORE_LETAL   = 3.0         # palier fort (au-delà de l'élargie, côté chaud)
+FRAIE_FROID_PLAFOND_INTERMEDIAIRE = True  # côté froid : max = intermédiaire
+
+# Calibration fraie : conversion sévérité/létalité → classe (variante médiane).
+# Seuils de sévérité moyenne (P0<[0] ; P1<[1] ; P2<[2] ; sinon P3)
+FRAIE_SEUILS_SEV = (0.22, 1.05, 1.75)
+# Seuils de % de temps en zone létale (plancher non dilutable)
+FRAIE_SEUILS_LETAL = (2.0, 6.0, 15.0)
+
+
+# --- Déclenchement du volet STRESS de Q_thermie_bio (note révisée) ---
+# Le volet létal reste le déclencheur principal (fiable). Le volet stress
+# chronique n'est calculé QUE si DEUX conditions cumulatives sont réunies :
+#   (1) matérialité : le % de jours estivaux stressés dépasse un plancher ;
+#   (2) causalité  : la relation débit→température est réellement négative
+#       (corrélation Q↔Tmh < 0) et significative (R² ≥ seuil).
+# Sinon, agir sur le débit ne réduirait pas le stress : volet désactivé.
+STRESS_PLANCHER_PCT = 10.0        # plancher de matérialité (% jours stressés)
+STRESS_CORR_R2_MIN = 0.10         # R² minimal de la relation Q↔Tmh
+STRESS_CORR_SIGNE_NEG = True      # exiger une corrélation négative (physique)
+
 # Pondérations du SGVT (note §2.6)
 SGVT_POIDS_4 = dict(s=0.25, c=0.30, a=0.20, f=0.25)   # 4 composantes
 SGVT_POIDS_3 = dict(s=0.30, c=0.40, a=0.30, f=None)   # repli 3 composantes
@@ -173,6 +205,9 @@ class AnalyseConfig:
     seuil_comblement_desinf: float = 0.10        # 10 % (note : paramétrable)
     normales_fenetre_lissage: int = 10           # ±N jours (lissage circulaire)
     normales_min_annees: int = 20                # seuil d'alerte sur 1991-2020
+    # Déclenchement du volet stress de Q_thermie_bio (2 verrous cumulatifs)
+    stress_plancher_pct: float = 10.0            # matérialité (% jours stressés)
+    stress_corr_r2_min: float = 0.10             # causalité (R² min Q↔Tmh)
 
     def contexte(self) -> dict:
         if self.contexte_piscicole not in CONTEXTES:

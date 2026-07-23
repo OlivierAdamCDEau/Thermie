@@ -15,7 +15,12 @@ import pandas as pd
 from scipy import stats
 
 from .config import (PENTE_SEVERITE, FACTEUR_RESISTANCE, ROMBOUGH_DELTA,
-                     FRAIE_MIN_JOURS_CENTRAL, SGVT_POIDS_4, SGVT_POIDS_3)
+                     FRAIE_MIN_JOURS_CENTRAL, SGVT_POIDS_4, SGVT_POIDS_3,
+                     FRAIE_SCORE_ELARGIE, FRAIE_SCORE_LETAL,
+                     FRAIE_FROID_PLAFOND_INTERMEDIAIRE,
+                     FRAIE_SEUILS_SEV, FRAIE_SEUILS_LETAL,
+                     STRESS_PLANCHER_PCT, STRESS_CORR_R2_MIN,
+                     STRESS_CORR_SIGNE_NEG)
 
 
 # ============================================================
@@ -158,6 +163,41 @@ def cat_fraie(pct):
     return "Vulnérabilité fraie critique", 3
 
 
+def cat_fraie_sev(sev_moy, pct_letal):
+    """
+    Classe fraie combinant la sévérité moyenne (pondération 3 paliers) et le
+    temps passé en zone létale. La sévérité ∈ [0, 3] : 0 = tout dans l'optimum,
+    1 = tout dans la fenêtre élargie, 3 = tout en zone létale.
+
+    Calibration « médiane » (validée) : la zone élargie traduit un simple
+    ralentissement du développement, tandis que la létalité embryonnaire est un
+    événement grave — quelques jours au mauvais stade peuvent compromettre une
+    cohorte. La classe finale est donc le MAXIMUM entre le classement par
+    sévérité et celui par létalité, pour que la létalité ne puisse jamais être
+    diluée par une bonne moyenne.
+
+    Repères : 100 % optimum → P0 ; ≥ 75 % optimum → P0 ; 100 % en fenêtre
+    élargie sans létalité → P1 ; ≥ 6 % de létalité → P2 ; ≥ 15 % → P3.
+    """
+    # Classement par sévérité moyenne
+    if   sev_moy < FRAIE_SEUILS_SEV[0]: c_sev = 0
+    elif sev_moy < FRAIE_SEUILS_SEV[1]: c_sev = 1
+    elif sev_moy < FRAIE_SEUILS_SEV[2]: c_sev = 2
+    else:                               c_sev = 3
+    # Classement par temps en zone létale (plancher, non dilutable)
+    if   pct_letal < FRAIE_SEUILS_LETAL[0]: c_let = 0
+    elif pct_letal < FRAIE_SEUILS_LETAL[1]: c_let = 1
+    elif pct_letal < FRAIE_SEUILS_LETAL[2]: c_let = 2
+    else:                                   c_let = 3
+
+    P = max(c_sev, c_let)
+    libelles = {0: "Faible vulnérabilité fraie",
+                1: "Vulnérabilité fraie modérée",
+                2: "Forte vulnérabilité fraie",
+                3: "Vulnérabilité fraie critique"}
+    return libelles[P], P
+
+
 def _m_saisonnier(df, mois, m_estival, verbose=True):
     """
     Recalcule le coefficient de couplage air-eau sur la fenêtre saisonnière
@@ -183,26 +223,39 @@ def _m_saisonnier(df, mois, m_estival, verbose=True):
     return sl, dict(source="saisonnier", n=len(sub), r2=r2, m=sl)
 
 
-def _severite_fraie(tmh_norm, opt_min, opt_max, res, pente_key):
+def _severite_fraie(tmh, opt_min, opt_max, elargie_min, elargie_max):
     """
-    Score de sévérité journalier ∈ [0, ~3], BILATÉRAL.
-    0 dans l'optimum ; croît linéairement (pente espèce) hors optimum ;
-    pénalité renforcée (× FACTEUR_RESISTANCE) au-delà de la résistance haute.
-    Le froid excessif (sous opt_min) comme le chaud (au-dessus opt_max) comptent.
+    Score de sévérité journalier à 3 PALIERS (note révisée) :
+      - dans l'optimum strict [opt_min, opt_max]         → 0
+      - dans la fenêtre élargie mais hors optimum         → FRAIE_SCORE_ELARGIE
+      - au-delà de la fenêtre élargie côté CHAUD (létal)  → FRAIE_SCORE_LETAL
+      - au-delà de la fenêtre élargie côté FROID          → plafonné à
+        FRAIE_SCORE_ELARGIE si FRAIE_FROID_PLAFOND_INTERMEDIAIRE (le froid
+        ralentit l'incubation sans létalité massive ; létalité forte réservée
+        au chaud, cas dominant sous réchauffement).
+
+    Les températures passées sont les températures NORMALISÉES (année standard).
+    Retourne un tableau de scores par jour.
     """
-    pente = PENTE_SEVERITE.get(pente_key, 0.35)
-    x = np.asarray(tmh_norm, dtype=float)
-    sev = np.zeros_like(x)
-    # écart au-dessus de l'optimum
-    above = x > opt_max
-    sev[above] = pente * (x[above] - opt_max)
-    # renfort au-delà de la résistance haute
-    hot = x > res
-    sev[hot] += pente * FACTEUR_RESISTANCE * (x[hot] - res)
-    # écart en dessous de l'optimum (bilatéral)
-    below = x < opt_min
-    sev[below] = pente * (opt_min - x[below])
-    return np.clip(sev, 0, 3.0)
+    x = np.asarray(tmh, dtype=float)
+    sev = np.full_like(x, np.nan)
+    # optimum strict → 0
+    opt = (x >= opt_min) & (x <= opt_max)
+    sev[opt] = 0.0
+    # fenêtre élargie côté chaud (hors optimum) → intermédiaire
+    elar_chaud = (x > opt_max) & (x <= elargie_max)
+    sev[elar_chaud] = FRAIE_SCORE_ELARGIE
+    # fenêtre élargie côté froid (hors optimum) → intermédiaire
+    elar_froid = (x < opt_min) & (x >= elargie_min)
+    sev[elar_froid] = FRAIE_SCORE_ELARGIE
+    # au-delà élargie, côté chaud → létal (fort)
+    letal_chaud = x > elargie_max
+    sev[letal_chaud] = FRAIE_SCORE_LETAL
+    # au-delà élargie, côté froid → plafonné intermédiaire (ou fort si désactivé)
+    froid_ext = x < elargie_min
+    sev[froid_ext] = (FRAIE_SCORE_ELARGIE if FRAIE_FROID_PLAFOND_INTERMEDIAIRE
+                      else FRAIE_SCORE_LETAL)
+    return sev
 
 
 def _rombough_check(opt_min, opt_max, res, t_fraie, espece, pente_key="moderee",
@@ -247,6 +300,8 @@ def analyse_fraie_croissance(df, m_estival, contexte, contexte_key="cyprinicole"
         mois = pr["fenetre"]
         mois_c = pr.get("mois_central", mois[len(mois) // 2])
         opt_min, opt_max = pr["opt"]
+        elargie = pr.get("elargie", pr["opt"])  # repli sur opt si absent
+        elar_min, elar_max = elargie
         res = pr["res"]
         _rombough_check(opt_min, opt_max, res, pr["T_fraie"], espece,
                         pente_key=pr["pente"], verbose=verbose)
@@ -275,17 +330,39 @@ def analyse_fraie_croissance(df, m_estival, contexte, contexte_key="cyprinicole"
         # m saisonnier propre à la fenêtre de cette espèce
         m_s, m_info = _m_saisonnier(df, mois, m_estival, verbose)
         sub["Tmh_norm_fraie"] = sub["Tmh"] - (m_s * sub["Delta_TMm"])
+        # --- Score à 3 paliers sur T° NORMALISÉES ---
         sev = _severite_fraie(sub["Tmh_norm_fraie"].values,
-                              opt_min, opt_max, res, pr["pente"])
-        pct = 100 * (sev > 0).sum() / len(sev)
+                              opt_min, opt_max, elar_min, elar_max)
+        n_tot = len(sev)
+        # % de temps par palier (normalisé)
+        pct_optimum = 100 * (sev == 0).sum() / n_tot
+        pct_elargie = 100 * (sev == FRAIE_SCORE_ELARGIE).sum() / n_tot
+        pct_letal   = 100 * (sev == FRAIE_SCORE_LETAL).sum() / n_tot
+        # % hors optimum = ce qui n'est pas dans l'optimum strict
+        pct = pct_elargie + pct_letal
         sev_moy = float(np.mean(sev))
-        cat, P = cat_fraie(pct)
-        sous.append(dict(espece=espece, evalue=True, pct=pct, P=P, n=len(sev),
+        # --- % INFO sur T° BRUTES (non compensées) ---
+        sev_brut = _severite_fraie(sub["Tmh"].values,
+                                   opt_min, opt_max, elar_min, elar_max)
+        pct_optimum_brut = 100 * (sev_brut == 0).sum() / n_tot
+        pct_elargie_brut = 100 * (sev_brut == FRAIE_SCORE_ELARGIE).sum() / n_tot
+        pct_letal_brut   = 100 * (sev_brut == FRAIE_SCORE_LETAL).sum() / n_tot
+        pct_brut = pct_elargie_brut + pct_letal_brut
+        # Catégorie : pilotée par la sévérité moyenne (pondère les paliers)
+        cat, P = cat_fraie_sev(sev_moy, pct_letal)
+        sous.append(dict(espece=espece, evalue=True, pct=pct, P=P, n=n_tot,
                          n_central=n_central, n_annees=n_annees, cat=cat,
                          mois_central=mois_c, m_saison=m_s, m_info=m_info,
-                         opt=[opt_min, opt_max], res=res, src=pr["src"],
-                         fenetre=mois, sev_moy=sev_moy, sub=sub, sev=sev,
-                         pente=pr["pente"]))
+                         opt=[opt_min, opt_max], elargie=[elar_min, elar_max],
+                         res=res, src=pr["src"], fenetre=mois, sev_moy=sev_moy,
+                         sub=sub, sev=sev, pente=pr["pente"],
+                         # paliers normalisés
+                         pct_optimum=pct_optimum, pct_elargie=pct_elargie,
+                         pct_letal=pct_letal,
+                         # paliers bruts (info)
+                         pct_optimum_brut=pct_optimum_brut,
+                         pct_elargie_brut=pct_elargie_brut,
+                         pct_letal_brut=pct_letal_brut, pct_brut=pct_brut))
 
     # Sous-indicateur le plus contraignant PARMI LES ÉVALUÉS (P puis pct)
     valides = [s for s in sous if s.get("evalue")]
@@ -397,7 +474,8 @@ def _aic_segmente(x, y, q, q_break):
     return aic + 2*k*(k+1)/max(n-k-1, 1), sl_lo, sl_hi
 
 
-def analyse_debits_inflexion(df, sens_res, contexte, contexte_key="cyprinicole"):
+def analyse_debits_inflexion(df, sens_res, contexte, contexte_key="cyprinicole",
+                             stress_plancher_pct=None, stress_corr_r2_min=None):
     """
     Détecte Q*_stat (AICc optimal → base Q_thermie_fonc, appoint) et le
     Q*_vuln par fenêtre glissante locale (→ base Q_thermie_bio, résultat
@@ -492,28 +570,121 @@ def analyse_debits_inflexion(df, sens_res, contexte, contexte_key="cyprinicole")
         aigu_cum_q.append(qc); aigu_cum_nj.append(n_letal)
     aigu_cum_q = np.array(aigu_cum_q); aigu_cum_nj = np.array(aigu_cum_nj)
 
-    # courbes glissantes (base du calcul Q*_vuln)
-    vuln_roll, q_vuln_roll = [], []
+    # ========================================================
+    # VOLET LÉTAL — déclencheur PRINCIPAL (fiable, bas débits)
+    # ========================================================
     aigu_roll, q_aigu_roll = [], []
     for i in range(len(df_s) - win + 1):
         sub = df_s.iloc[i:i+win]
-        vuln_roll.append(100 * (sub[tmh_col] > seuil_chr).sum() / len(sub))
-        q_vuln_roll.append(sub["Q"].median())
         aigu_roll.append(int((sub[tmax_col] > seuil_aigu).sum()))
         q_aigu_roll.append(sub["Q"].median())
-
-    q_vuln_chr = None
-    for i in range(len(vuln_roll) - 1, -1, -1):
-        if vuln_roll[i] > SEUIL_VULN_PCT:
-            q_vuln_chr = q_vuln_roll[i]; break
     q_vuln_aigu = None
     for i in range(len(aigu_roll) - 1, -1, -1):
         if aigu_roll[i] >= 1:
             q_vuln_aigu = q_aigu_roll[i]; break
 
+    # ========================================================
+    # VOLET STRESS — CONDITIONNEL (2 verrous cumulatifs)
+    # ========================================================
+    # Verrou 1 — matérialité : % de jours estivaux stressés global
+    plancher = (STRESS_PLANCHER_PCT if stress_plancher_pct is None
+                else float(stress_plancher_pct))
+    r2_min = (STRESS_CORR_R2_MIN if stress_corr_r2_min is None
+              else float(stress_corr_r2_min))
+    pct_stress_global = 100 * (df_ete[tmh_col] > seuil_chr).mean()
+    materiel = pct_stress_global >= plancher
+
+    # Verrou 2 — causalité : relation débit→température négative et significative
+    # Deux mesures complémentaires (le verrou s'ouvre si l'une est concluante) :
+    #   - BRUTE : corr(Q, Tmh) — inclut l'effet structurel du régime d'étiage,
+    #     mais vulnérable aux artefacts de calendrier (débit et température
+    #     co-varient avec la saison) ;
+    #   - PARTIELLE : corrélation des résidus après retrait de l'effet de la
+    #     température de l'AIR sur les deux variables. Répond à la question
+    #     « à forçage atmosphérique égal, le débit module-t-il la température
+    #     de l'eau ? ». Contrôler l'air plutôt que le jour de l'année la rend
+    #     robuste même sur une seule saison (pas besoin de répétitions
+    #     inter-annuelles pour estimer une normale saisonnière).
+    qv = df_ete["Q"].values
+    tv = df_ete[tmh_col].values
+    mask_ok = np.isfinite(qv) & np.isfinite(tv)
+    if mask_ok.sum() >= 10:
+        r_qt = np.corrcoef(qv[mask_ok], tv[mask_ok])[0, 1]
+    else:
+        r_qt = np.nan
+    r2_qt = r_qt ** 2 if np.isfinite(r_qt) else np.nan
+
+    # Corrélation partielle contrôlée par la température de l'air
+    r_part = np.nan
+    if "T_air" in df_ete.columns:
+        av = df_ete["T_air"].values
+        m2 = mask_ok & np.isfinite(av) & (qv > 0)
+        if m2.sum() >= 15:
+            try:
+                lq = np.log(qv[m2] + 0.05)
+                deg = 3 if m2.sum() >= 40 else 1
+                res_q = lq - np.polyval(np.polyfit(av[m2], lq, deg), av[m2])
+                res_t = tv[m2] - np.polyval(np.polyfit(av[m2], tv[m2], deg), av[m2])
+                if np.std(res_q) > 1e-9 and np.std(res_t) > 1e-9:
+                    r_part = np.corrcoef(res_q, res_t)[0, 1]
+            except Exception:
+                r_part = np.nan
+    r2_part = r_part ** 2 if np.isfinite(r_part) else np.nan
+
+    def _concluant(r, r2):
+        if not np.isfinite(r) or not np.isfinite(r2):
+            return False
+        signe = (r < 0) if STRESS_CORR_SIGNE_NEG else True
+        return signe and r2 >= r2_min
+
+    causal_brut = _concluant(r_qt, r2_qt)
+    causal_part = _concluant(r_part, r2_part)
+    causal = causal_brut or causal_part
+    signe_ok = (r_qt < 0) if STRESS_CORR_SIGNE_NEG else True
+
+    stress_actif = materiel and causal
+    if not materiel:
+        raison_stress = (f"stress insuffisant ({pct_stress_global:.1f}% < "
+                         f"{plancher:.0f}% requis)")
+    elif not causal:
+        def _fmt(r, r2):
+            return f"{r:+.2f}" if np.isfinite(r) else "n.d."
+        raison_stress = (f"pas de lien débit→température concluant "
+                         f"(brute {_fmt(r_qt, r2_qt)}, "
+                         f"partielle/air {_fmt(r_part, r2_part)} ; "
+                         f"il faut une corrélation négative avec R² ≥ {r2_min:.2f})")
+    else:
+        raison_stress = None
+
+    # Courbe de stress vs débit : TOUJOURS calculée (diagnostic/affichage),
+    # mais on n'en extrait un débit seuil que si les deux verrous sont réunis.
+    vuln_roll, q_vuln_roll = [], []
+    for i in range(len(df_s) - win + 1):
+        sub = df_s.iloc[i:i+win]
+        vuln_roll.append(100 * (sub[tmh_col] > seuil_chr).sum() / len(sub))
+        q_vuln_roll.append(sub["Q"].median())
+
+    q_vuln_chr = None
+    if stress_actif:
+        # premier franchissement en venant des bas débits (plus stable que le
+        # « dernier franchissement en descendant », qui capturait le bruit)
+        for i in range(len(vuln_roll)):
+            if vuln_roll[i] > SEUIL_VULN_PCT:
+                q_vuln_chr = q_vuln_roll[i]; break
+
+    # ========================================================
+    # Q*_vuln final : max(létal, stress si actif)
+    # ========================================================
     q_vuln_candidates = [v for v in [q_vuln_chr, q_vuln_aigu] if v is not None]
     q_vuln = max(q_vuln_candidates) if q_vuln_candidates else None
     q_vuln_valide = q_vuln is not None
+    diag_stress = dict(pct_stress_global=pct_stress_global,
+                       plancher=plancher, r2_min=r2_min, materiel=materiel,
+                       r_qt=r_qt, r2_qt=r2_qt,
+                       r_partielle=r_part, r2_partielle=r2_part,
+                       causal_brut=causal_brut, causal_partielle=causal_part,
+                       causal=causal, stress_actif=stress_actif,
+                       raison=raison_stress)
 
     base = df.attrs.get("base_debit", "influencé")
     print(f"  Base de débit            : {base}")
@@ -523,8 +694,10 @@ def analyse_debits_inflexion(df, sens_res, contexte, contexte_key="cyprinicole")
     print(f"  Interprétation           : {interp}")
     if q_vuln_chr is not None:
         print(f"  Q*_vuln_stress           : {q_vuln_chr:.3f} m³/s (stress > {SEUIL_VULN_PCT}%)")
+    elif stress_actif:
+        print(f"  Q*_vuln_stress           : non détecté (conditions réunies mais pas de seuil)")
     else:
-        print(f"  Q*_vuln_stress           : non détecté")
+        print(f"  Q*_vuln_stress           : désactivé — {raison_stress}")
     if q_vuln_aigu is not None:
         print(f"  Q*_vuln_létal            : {q_vuln_aigu:.3f} m³/s (≥1j > {seuil_aigu}°C)")
     else:
@@ -542,6 +715,7 @@ def analyse_debits_inflexion(df, sens_res, contexte, contexte_key="cyprinicole")
         delta_aicc_aicc=delta_aicc, aicc_optimal=best_aicc, deux_ruptures=deux_ruptures,
         q_vuln=q_vuln, q_vuln_chr=q_vuln_chr, q_vuln_aigu=q_vuln_aigu,
         q_vuln_valide=q_vuln_valide, seuil_vuln_pct=SEUIL_VULN_PCT,
+        diag_stress=diag_stress,
         vuln_cum_q=vuln_cum_q, vuln_cum_pct=vuln_cum_pct,
         aigu_cum_q=aigu_cum_q, aigu_cum_nj=aigu_cum_nj,
         vuln_roll=np.array(vuln_roll), q_vuln_roll=np.array(q_vuln_roll),
@@ -697,3 +871,136 @@ def segments_valides(dates, valeurs, seuil_pas=3, pas=None):
     for _, grp in pd.DataFrame({"d": d, "v": v, "s": seg_id}).groupby("s"):
         segments.append((grp["d"].values, grp["v"].values))
     return segments
+
+
+# ============================================================
+# TEST PRÉALABLE — le débit module-t-il la température de l'eau ?
+# ============================================================
+def corr_partielle_air(q, teau, tair, deg=3, n_min=15):
+    """
+    Corrélation partielle entre débit et température de l'eau, à température
+    de l'AIR égale : on retire de chaque variable l'effet du forçage
+    atmosphérique (ajustement polynomial), puis on corrèle les résidus.
+
+    Répond à : « à forçage atmosphérique égal, le débit module-t-il la
+    température de l'eau ? » — c'est le mécanisme d'inertie thermique.
+    Contrôler l'air plutôt que le calendrier rend la mesure robuste même sur
+    une seule saison (pas besoin de répétitions inter-annuelles pour estimer
+    une normale saisonnière).
+    """
+    q = np.asarray(q, dtype=float)
+    teau = np.asarray(teau, dtype=float)
+    tair = np.asarray(tair, dtype=float)
+    m = np.isfinite(q) & np.isfinite(teau) & np.isfinite(tair) & (q > 0)
+    if m.sum() < n_min:
+        return np.nan
+    try:
+        lq = np.log(q[m] + 0.05)
+        d = deg if m.sum() >= 40 else 1
+        rq = lq - np.polyval(np.polyfit(tair[m], lq, d), tair[m])
+        rt = teau[m] - np.polyval(np.polyfit(tair[m], teau[m], d), tair[m])
+        if np.std(rq) < 1e-9 or np.std(rt) < 1e-9:
+            return np.nan
+        return float(np.corrcoef(rq, rt)[0, 1])
+    except Exception:
+        return np.nan
+
+
+def _corr_brute(q, teau, n_min=10):
+    q = np.asarray(q, dtype=float); t = np.asarray(teau, dtype=float)
+    m = np.isfinite(q) & np.isfinite(t)
+    if m.sum() < n_min:
+        return np.nan
+    return float(np.corrcoef(q[m], t[m])[0, 1])
+
+
+def analyse_relation_debit_temperature(df, tmh_col=None, r2_min=0.10,
+                                       mois_estivaux=(6, 7, 8, 9), verbose=True):
+    """
+    Test PRÉALABLE à tous les débits de référence : vérifie que le postulat
+    fondateur de l'approche (le débit module la température de l'eau) est
+    vérifié sur la station.
+
+    La relation est mesurée de deux façons — corrélation BRUTE (inclut l'effet
+    structurel du régime d'étiage) et corrélation PARTIELLE à température d'air
+    égale (isole le rôle propre du débit) — et déclinée par gamme de débit
+    (toute la gamme, sous la médiane, quart inférieur) afin de détecter les
+    effets de seuil : l'inertie thermique peut ne se perdre qu'en étiage
+    prononcé, l'effet saturant aux débits plus élevés.
+
+    Retourne un dict avec le tableau par gamme, le verdict et les données
+    nécessaires aux graphiques. Aucun calcul n'est bloqué : le verdict est
+    informatif (une réserve est affichée en aval si la relation est faible).
+    """
+    if tmh_col is None:
+        tmh_col = "Tmh_norm" if "Tmh_norm" in df.columns else "Tmh"
+    if "Q" not in df.columns or df["Q"].notna().sum() == 0:
+        return dict(disponible=False,
+                    message="Aucune donnée de débit : test non réalisable.")
+
+    d = df[df["month"].isin(list(mois_estivaux))].copy()
+    d = d.dropna(subset=["Q", tmh_col])
+    if "T_air" not in d.columns:
+        d["T_air"] = np.nan
+    if len(d) < 20:
+        return dict(disponible=False,
+                    message=f"Données estivales insuffisantes ({len(d)} jours) "
+                            f"pour tester la relation débit–température.")
+
+    med = float(d["Q"].median()); q25 = float(d["Q"].quantile(0.25))
+    gammes = [("Toute la gamme", d, None),
+              (f"Sous la médiane (Q < {med:.3f})", d[d["Q"] < med], med),
+              (f"Quart inférieur (Q < {q25:.3f})", d[d["Q"] < q25], q25)]
+
+    lignes = []
+    for label, sub, borne in gammes:
+        rb = _corr_brute(sub["Q"], sub[tmh_col])
+        rp = corr_partielle_air(sub["Q"], sub[tmh_col], sub["T_air"])
+        lignes.append(dict(
+            gamme=label, n=len(sub), borne=borne,
+            r_brute=rb, r2_brute=rb**2 if np.isfinite(rb) else np.nan,
+            r_partielle=rp, r2_partielle=rp**2 if np.isfinite(rp) else np.nan,
+            concluante=bool(np.isfinite(rp) and rp < 0 and rp**2 >= r2_min)
+                       or bool(np.isfinite(rb) and rb < 0 and rb**2 >= r2_min)))
+
+    # --- Verdict gradué ---
+    globale = lignes[0]
+    rp_g, r2p_g = globale["r_partielle"], globale["r2_partielle"]
+    if any(l["concluante"] for l in lignes):
+        verdict = "etablie"
+        libelle = "Relation débit–température établie"
+        commentaire = ("Le débit module effectivement la température de l'eau : "
+                       "le postulat de l'approche thermique est vérifié.")
+    elif np.isfinite(rp_g) and rp_g > 0 and r2p_g >= r2_min:
+        verdict = "inversee"
+        libelle = "Relation inversée (anormale)"
+        commentaire = ("La température augmente avec le débit, ce qui est "
+                       "physiquement inattendu. Causes possibles : rejet ou "
+                       "plan d'eau à l'amont, soutien d'étiage, apport de nappe, "
+                       "ou artefact de données. Les débits thermiques sont à "
+                       "interpréter avec une forte réserve.")
+    elif np.isfinite(rp_g) and rp_g < 0:
+        verdict = "faible"
+        libelle = "Relation faible"
+        commentaire = ("Le sens est physiquement cohérent mais le lien est trop "
+                       "ténu pour être considéré comme établi. Les débits "
+                       "thermiques restent calculés, mais leur portée est "
+                       "limitée : agir sur le débit n'aurait qu'un effet "
+                       "marginal sur la température.")
+    else:
+        verdict = "absente"
+        libelle = "Relation absente"
+        commentaire = ("Aucun lien détectable entre débit et température : le "
+                       "milieu est thermiquement tamponné (nappe, ombrage, "
+                       "morphologie). Les débits thermiques ne constituent pas "
+                       "un levier de gestion pertinent sur cette station.")
+
+    res = dict(disponible=True, verdict=verdict, libelle=libelle,
+               commentaire=commentaire, r2_min=r2_min, lignes=lignes,
+               mediane=med, q25=q25, tmh_col=tmh_col,
+               data=d[["Q", tmh_col, "T_air"]].rename(columns={tmh_col: "Teau"}))
+    if verbose:
+        print(f"  Relation débit–température : {libelle} "
+              f"(partielle globale = {rp_g:+.2f})" if np.isfinite(rp_g)
+              else f"  Relation débit–température : {libelle}")
+    return res
