@@ -10,11 +10,13 @@ from typing import Optional
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
 # ============================================================
-__version__ = "3.0"
-VERSION_DATE = "2026-07-23"
+__version__ = "3.1"
+VERSION_DATE = "2026-07-24"
 VERSION_NOTES = (
-    "Fraie en 3 phases (pré-frai / ponte / incubation) · froid bloquant par "
-    "espèce · matrice de diagnostic · relation Q–T° en source unique (air lissé)"
+    "Fraie en 3 phases (pré-frai / ponte / incubation) avec seuils propres · "
+    "froid bloquant selon l'espèce · matrice de diagnostic à deux entrées · "
+    "relation Q–T° en source unique (contrôle par l'air lissé) · "
+    "correctifs d'affichage sur les espèces non évaluables"
 )
 
 

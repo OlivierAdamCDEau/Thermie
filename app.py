@@ -115,11 +115,23 @@ with st.sidebar.expander("⚙️ Contrôle qualité (avancé)"):
     qc.mad_outliers = st.checkbox("Outliers MAD", qc.mad_outliers)
     qc.mad_k = st.slider("Seuil MAD (k × MAD)", 10.0, 100.0, qc.mad_k, 5.0)
 
-with st.sidebar.expander("🐟 Paramètres fraie (lecture)"):
+with st.sidebar.expander("🐟 Paramètres de reproduction (lecture)"):
+    _MOIS = {1: "janv", 2: "févr", 3: "mars", 4: "avr", 5: "mai", 6: "juin",
+             7: "juil", 8: "août", 9: "sept", 10: "oct", 11: "nov", 12: "déc"}
     for esp, pr in CONTEXTES[contexte_key].get("fraie", {}).items():
-        mois = "-".join(map(str, pr["fenetre"]))
-        st.text(f"{esp}\n  fenêtre {mois} (central {pr['mois_central']})\n"
-                f"  optimum {pr['opt'][0]}–{pr['opt'][1]}°C, rés. {pr['res']}°C")
+        froid = "bloquant" if pr.get("froid_bloquant") else "ralentissant"
+        st.markdown(f"**{esp}** · froid {froid}")
+        for ph in pr.get("phases", []):
+            mois = "-".join(_MOIS[m] for m in ph["mois"])
+            crit = " ★" if ph.get("critique") else ""
+            st.text(f"  {ph['cle']}{crit} · {mois}\n"
+                    f"    optimum {ph['opt'][0]:.0f}–{ph['opt'][1]:.0f}°C, "
+                    f"élargie {ph['elargie'][0]:.0f}–{ph['elargie'][1]:.0f}°C")
+        if pr.get("src"):
+            st.caption(pr["src"])
+    st.caption("★ phase critique · au-delà de la fenêtre élargie : létalité "
+               "(côté chaud) ou échec reproducteur (côté froid, espèces à "
+               "ponte printanière/estivale).")
 
 faire_clim = st.sidebar.checkbox("Inclure le volet climatique (bonus)", False)
 

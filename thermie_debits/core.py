@@ -257,27 +257,6 @@ def _severite_fraie(tmh, opt_min, opt_max, elargie_min, elargie_max,
     return sev
 
 
-def _rombough_check(opt_min, opt_max, res, t_fraie, espece, pente_key="moderee",
-                    verbose=True):
-    """
-    Garde-fou Rombough (1997) : pour les espèces sténothermes, la borne de
-    résistance devrait tomber à ~±6°C de la T° de fraie. La règle ne s'applique
-    PAS aux espèces eurythermes/tolérantes (pente 'faible' — ex. brochet), dont
-    la fenêtre de tolérance est physiologiquement plus large : on ne signale
-    alors rien. Pour les sténothermes, un écart marqué déclenche un avertissement
-    de cohérence des bornes.
-    """
-    if pente_key == "faible":
-        return True  # espèce tolérante : règle ±6°C non applicable
-    borne_haute_attendue = t_fraie + ROMBOUGH_DELTA
-    if abs(res - borne_haute_attendue) > 3.0:
-        if verbose:
-            print(f"      ⚠️  Rombough [{espece}] : résistance {res}°C éloignée "
-                  f"de T_fraie+6={borne_haute_attendue:.0f}°C — bornes à vérifier")
-        return False
-    return True
-
-
 def analyse_fraie_croissance(df, m_estival, contexte, contexte_key="cyprinicole",
                              verbose=True):
     """
