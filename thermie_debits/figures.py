@@ -32,7 +32,12 @@ def fig_chronique(df, nom, output_dir):
     from .core import inserer_lacunes
     # Couper la courbe de T° eau (Tmh) aux lacunes de mesure pour ne pas
     # relier des points de part et d'autre d'un trou (point 2 des retours).
-    df = inserer_lacunes(df, col_date="date_dt", cols_valeurs=["Tmh"], seuil_pas=3)
+    # Si la normalisation a été calculée, on trace aussi l'eau compensée pour
+    # que l'écart entre observé et « année standard » soit lisible d'un coup
+    # d'œil (c'est cet écart qui matérialise l'anomalie climatique de la période).
+    cols_coupe = ["Tmh"] + (["Tmh_norm"] if "Tmh_norm" in df.columns else [])
+    df = inserer_lacunes(df, col_date="date_dt", cols_valeurs=cols_coupe,
+                         seuil_pas=3)
     fig, ax = plt.subplots(figsize=(15, 7))
     ax.set_facecolor("#f8f9fa")
     ax.fill_between(df["date_dt"], df["T_normale"], df["T_air"],
@@ -46,7 +51,14 @@ def fig_chronique(df, nom, output_dir):
     ax.plot(df["date_dt"], df["T_air"], color="#e67e22", lw=1.2, alpha=0.8,
             label="T air mesurée")
     ax.plot(df["date_dt"], df["Tmh"], color="#2980b9", lw=2.5,
-            label="Tmh — Moy. mobile 7j eau")
+            label="Tmh — eau BRUTE (moy. mobile 7 j)")
+    if "Tmh_norm" in df.columns and df["Tmh_norm"].notna().any():
+        ax.plot(df["date_dt"], df["Tmh_norm"], color="#117A65", lw=2.0,
+                ls="-.", alpha=0.95,
+                label="Tmh — eau COMPENSÉE (année standard)")
+        ax.fill_between(df["date_dt"], df["Tmh"], df["Tmh_norm"],
+                        color="#16A085", alpha=0.13, zorder=0,
+                        label="Écart brut ↔ compensé")
     ax.set_xlabel("Date", fontsize=12); ax.set_ylabel("Température (°C)", fontsize=12)
     ax.set_title(f"{nom} — Chronique thermique\nNormales 1991–2020, T air et Tmh",
                  fontsize=13, fontweight="bold", pad=15)

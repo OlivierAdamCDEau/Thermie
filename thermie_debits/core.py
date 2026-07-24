@@ -65,7 +65,7 @@ def cat_aigue(n):
 # FUSION FINALE + NORMALISATION (note §2.3, normales 1991–2020)
 # ============================================================
 def fusionner(daily_eau_propre, df_air, ecart_by_date, normales_lkp,
-              df_debits=None):
+              df_debits=None, lissage_delta=7):
     """
     Fusionne eau (nettoyée) + air + normales (+ débits déjà fusionnés).
     Calcule T_air_std, Tmh (moy. mobile 7j) et prépare les colonnes d'analyse.
@@ -84,6 +84,16 @@ def fusionner(daily_eau_propre, df_air, ecart_by_date, normales_lkp,
     df = df.sort_values("date").reset_index(drop=True)
     df["Tmh"]     = df["T_eau_moy"].rolling(window=7, min_periods=4,
                                             center=True).mean()
+    # Anomalie d'air LISSÉE sur la même fenêtre que Tmh.
+    # La normalisation retranche m × (anomalie d'air) à la température de
+    # l'eau. Or Tmh est une moyenne sur 7 jours tandis que Delta_TMm est
+    # journalier : soustraire un signal journalier bruyant d'un signal
+    # hebdomadaire lissé injecte du bruit sans fondement physique, l'eau
+    # répondant à l'air avec inertie. On aligne donc les deux échelles de
+    # temps. La moyenne de la série est inchangée ; seul le bruit disparaît.
+    df["Delta_TMm_liss"] = (df["Delta_TMm"]
+                            .rolling(window=lissage_delta, min_periods=1,
+                                     center=True).mean())
     df["date_dt"] = pd.to_datetime(df["date"])
 
     if df_debits is not None:
@@ -136,8 +146,10 @@ def analyse_sensibilite(df):
 # ÉTAPE 2 — VULNÉRABILITÉ (note §2.5)
 # ============================================================
 def analyse_vulnerabilite(df, m, contexte, contexte_key="cyprinicole"):
-    df["Tmh_norm"]  = df["Tmh"]       - (m * df["Delta_TMm"])
-    df["Tmax_norm"] = df["T_eau_max"] - (m * df["Delta_TMm"])
+    _delta = (df["Delta_TMm_liss"] if "Delta_TMm_liss" in df.columns
+              else df["Delta_TMm"])
+    df["Tmh_norm"]  = df["Tmh"]       - (m * _delta)
+    df["Tmax_norm"] = df["T_eau_max"] - (m * _delta)
     df_ete = df[df["month"].isin([6, 7, 8, 9])].copy()
     s_chr, s_aig = contexte["seuil_chr"], contexte["seuil_aigu"]
     tmh_v  = df_ete.dropna(subset=["Tmh_norm"])
@@ -295,7 +307,9 @@ def analyse_fraie_croissance(df, m_estival, contexte, contexte_key="cyprinicole"
 
         # coefficient de couplage saisonnier propre à la fenêtre de l'espèce
         m_s, m_info = _m_saisonnier(df, mois_tous, m_estival, verbose)
-        sub["Tmh_norm_fraie"] = sub["Tmh"] - (m_s * sub["Delta_TMm"])
+        _d = (sub["Delta_TMm_liss"] if "Delta_TMm_liss" in sub.columns
+              else sub["Delta_TMm"])
+        sub["Tmh_norm_fraie"] = sub["Tmh"] - (m_s * _d)
 
         # ---- Score journalier : le plus contraignant des phases actives ----
         sev_glob = np.full(len(sub), np.nan)

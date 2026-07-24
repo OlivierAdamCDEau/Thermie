@@ -10,13 +10,15 @@ from typing import Optional
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
 # ============================================================
-__version__ = "3.1"
+__version__ = "3.2"
 VERSION_DATE = "2026-07-24"
 VERSION_NOTES = (
     "Fraie en 3 phases (pré-frai / ponte / incubation) avec seuils propres · "
     "froid bloquant selon l'espèce · matrice de diagnostic à deux entrées · "
     "relation Q–T° en source unique (contrôle par l'air lissé) · "
-    "correctifs d'affichage sur les espèces non évaluables"
+    "correctifs d'affichage sur les espèces non évaluables · anomalie d'air "
+    "lissée pour la compensation (série normalisée débruitée) · chronique "
+    "affichant l'eau brute ET compensée"
 )
 
 
@@ -300,6 +302,11 @@ class AnalyseConfig:
     seuil_comblement_desinf: float = 0.10        # 10 % (note : paramétrable)
     normales_fenetre_lissage: int = 10           # ±N jours (lissage circulaire)
     normales_min_annees: int = 20                # seuil d'alerte sur 1991-2020
+    # Lissage de l'anomalie d'air servant à la normalisation : aligné par
+    # défaut sur la fenêtre de Tmh (7 j), pour que les deux termes de la
+    # soustraction soient à la même échelle de temps (l'eau répond à l'air
+    # avec inertie). Mettre 1 pour retrouver le comportement journalier.
+    normalisation_lissage_delta: int = 7
     # Déclenchement du volet stress de Q_thermie_bio (2 verrous cumulatifs)
     stress_plancher_pct: float = 10.0            # matérialité (% jours stressés)
     stress_corr_r2_min: float = 0.10             # causalité (R² min Q↔Tmh)

@@ -125,7 +125,8 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
     res.rapport_qc = rapport
 
     # ---- 4. Fusion + normalisation ----
-    df = core.fusionner(propre, df_air, ecart, normales, df_debits=df_debits)
+    df = core.fusionner(propre, df_air, ecart, normales, df_debits=df_debits,
+                        lissage_delta=getattr(config, 'normalisation_lissage_delta', 7))
     res.df = df
 
     # ---- 5. Chaîne de calcul thermique ----

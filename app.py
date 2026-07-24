@@ -56,6 +56,14 @@ up_air = st.sidebar.file_uploader(
 with st.sidebar.expander("📐 Calcul des normales (avancé)"):
     norm_fenetre = st.slider("Lissage des normales (± jours)", 3, 20, 10, 1)
     norm_min_ans = st.number_input("Années minimum sur 1991–2020", 5, 30, 20)
+    liss_delta = st.slider(
+        "Lissage de l'anomalie d'air pour la compensation (jours)", 1, 15, 7, 1,
+        help="La compensation retranche m × (anomalie d'air) à la température "
+             "de l'eau. Comme Tmh est une moyenne sur 7 jours et que l'eau "
+             "répond à l'air avec inertie, l'anomalie est lissée sur la même "
+             "fenêtre : les deux termes sont alors à la même échelle de temps. "
+             "Mettre 1 pour revenir à l'anomalie journalière (série beaucoup "
+             "plus bruitée).")
 
 st.sidebar.header("2. Contexte & mode")
 contexte_key = st.sidebar.selectbox(
@@ -236,6 +244,7 @@ if lancer:
                         seuil_comblement_desinf=seuil_comblement,
                         normales_fenetre_lissage=norm_fenetre,
                         normales_min_annees=norm_min_ans,
+                        normalisation_lissage_delta=liss_delta,
                         stress_plancher_pct=stress_plancher,
                         stress_corr_r2_min=stress_r2, output_dir=None)
     with st.spinner("Analyse en cours..."):
