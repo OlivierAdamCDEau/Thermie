@@ -43,6 +43,8 @@ def _fig_download(fig, label, filename):
 # ============================================================
 st.sidebar.title("🌡️ Configuration")
 st.sidebar.caption(f"version **{__version__}** · {VERSION_DATE}")
+st.sidebar.caption("Si ce numéro ne correspond pas à la dernière livraison, "
+                   "le déploiement n'a pas pris (voir CHANGELOG.md).")
 
 st.sidebar.header("1. Données")
 up_eau = st.sidebar.file_uploader("Sonde thermique (eau) *", type=["csv", "xls", "xlsx"])
