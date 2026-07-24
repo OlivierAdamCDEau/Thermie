@@ -12,7 +12,9 @@ import tempfile
 import pandas as pd
 import streamlit as st
 
-from thermie_debits.config import AnalyseConfig, SourcesConfig, QCConfig, CONTEXTES
+from thermie_debits.config import (AnalyseConfig, SourcesConfig, QCConfig,
+                                    CONTEXTES, __version__, VERSION_DATE,
+                                    VERSION_NOTES)
 from thermie_debits.orchestrator import run
 
 st.set_page_config(page_title="Thermie & Débits — HMUC Moselle",
@@ -40,6 +42,7 @@ def _fig_download(fig, label, filename):
 # SIDEBAR — Configuration
 # ============================================================
 st.sidebar.title("🌡️ Configuration")
+st.sidebar.caption(f"version **{__version__}** · {VERSION_DATE}")
 
 st.sidebar.header("1. Données")
 up_eau = st.sidebar.file_uploader("Sonde thermique (eau) *", type=["csv", "xls", "xlsx"])
@@ -185,7 +188,9 @@ lancer = st.sidebar.button("▶️  Lancer l'analyse", type="primary",
 # ZONE PRINCIPALE
 # ============================================================
 st.title("Analyse thermie & débits de référence")
-st.caption("HMUC Moselle — approche thermique (note méthodologique Point 2)")
+st.caption(f"HMUC Moselle — approche thermique (note méthodologique Point 2) · application v{__version__} ({VERSION_DATE})")
+with st.expander("ℹ️ Contenu de cette version"):
+    st.markdown(f"**v{__version__}** — {VERSION_NOTES}")
 
 
 def _inputs_ok():

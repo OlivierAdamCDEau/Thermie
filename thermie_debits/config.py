@@ -1,16 +1,21 @@
 """
 config.py — Paramètres de l'analyse thermie & débits (package thermie_debits).
-
-Toute la configuration « en dur » de l'ancien script monolithique est ici
-regroupée en dataclasses typées. Chaque champ est destiné à devenir un widget
-dans l'application Streamlit ; les valeurs par défaut reproduisent exactement
-le comportement validé de la v6.2.
-
-Aucun I/O, aucune dépendance lourde : ce module est importable partout.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+# ============================================================
+# VERSION — permet de vérifier d'un coup d'œil quelle version
+# est réellement déployée (affichée dans l'app et les exports).
+# ============================================================
+__version__ = "3.0"
+VERSION_DATE = "2026-07-23"
+VERSION_NOTES = (
+    "Fraie en 3 phases (pré-frai / ponte / incubation) · froid bloquant par "
+    "espèce · matrice de diagnostic · relation Q–T° en source unique (air lissé)"
+)
 
 
 # ============================================================
