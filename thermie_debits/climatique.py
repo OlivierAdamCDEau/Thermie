@@ -198,36 +198,57 @@ def volet_climatique(daily_eau, df_air, df, contexte, nom, output_dir,
         plt.tight_layout()
         figs.append(_clim_fin(fig, output_dir, "Clim4_Temperature_Eau.png"))
 
-    # ---- Clim6 (bonus) — Étiage vs précipitations : les années sèches se
-    # traduisent-elles en étiages plus sévères sur cette station ? ----
-    if annual_delta is not None and rr_annual is not None and days_lt1 is not None:
-        yrs_communes = sorted(set(rr_annual.index) & set(days_lt1.index))
+    # ---- Clim6 (bonus) — Précipitations × sévérité thermique, taille des
+    # bulles = jours d'étiage. Ne retient que les années à couverture
+    # complète (≥ 350 jours de données air) : une année tronquée fausserait
+    # le cumul de précipitations et donc la comparaison inter-annuelle. ----
+    if rr_annual is not None and days_lt1 is not None:
+        jours_par_an = dfa.groupby("Year").size()
+        annees_completes = set(jours_par_an[jours_par_an >= 350].index)
+        s_chr, s_aig = contexte["seuil_chr"], contexte["seuil_aigu"]
+        de2 = daily_eau.copy()
+        de2["date_dt"] = pd.to_datetime(de2["date"])
+        de2["Year"] = de2["date_dt"].dt.year
+        jours_canicule = de2.groupby("Year").apply(
+            lambda g: int((g["T_eau_max"] > s_aig).sum()))
+
+        yrs_communes = sorted(set(rr_annual.index) & set(days_lt1.index) &
+                              set(jours_canicule.index) & annees_completes)
         if len(yrs_communes) >= 4:
             x_rr = [rr_annual[y] for y in yrs_communes]
-            y_et = [int(days_lt1.get(y, 0)) for y in yrs_communes]
-            fig, ax = plt.subplots(figsize=(8.5, 5.2))
+            y_can = [int(jours_canicule.get(y, 0)) for y in yrs_communes]
+            n_etiage = [int(days_lt1.get(y, 0)) for y in yrs_communes]
+            # Taille de bulle proportionnelle aux jours d'étiage (surface,
+            # donc racine carrée, pour une perception visuelle proportionnée).
+            tailles = [60 + 22 * np.sqrt(n) for n in n_etiage]
+
+            fig, ax = plt.subplots(figsize=(9, 5.6))
             ax.set_facecolor("#f8f9fa")
-            sc = ax.scatter(x_rr, y_et, c=yrs_communes, cmap="viridis", s=90,
-                           edgecolors="white", zorder=3)
-            for xi, yi, yr in zip(x_rr, y_et, yrs_communes):
-                ax.annotate(str(int(yr)), (xi, yi), fontsize=7.5, ha="center",
-                           va="bottom", xytext=(0, 4), textcoords="offset points",
-                           color="#555555")
+            sc = ax.scatter(x_rr, y_can, s=tailles, c=yrs_communes, cmap="viridis",
+                           edgecolors="white", linewidth=1.2, alpha=0.85, zorder=3)
+            for xi, yi, yr, ne in zip(x_rr, y_can, yrs_communes, n_etiage):
+                ax.annotate(f"{int(yr)}", (xi, yi), fontsize=8.5, ha="center",
+                           va="bottom", xytext=(0, 9), textcoords="offset points",
+                           color="#333333", fontweight="bold")
+                ax.annotate(f"({ne}j étiage)", (xi, yi), fontsize=7,
+                           ha="center", va="top", xytext=(0, -9),
+                           textcoords="offset points", color="#7F8C8D")
             if len(x_rr) >= 3:
-                sl = np.polyfit(x_rr, y_et, 1)
+                sl = np.polyfit(x_rr, y_can, 1)
                 xs = np.linspace(min(x_rr), max(x_rr), 50)
                 ax.plot(xs, np.polyval(sl, xs), color=DKRED, lw=1.8, ls="--",
                        alpha=0.7, label="Tendance linéaire", zorder=2)
                 leg = ax.legend(fontsize=8.5, loc="best"); style_legend(leg)
-            ax.set_xlabel("Précipitations annuelles (mm)", fontsize=10)
-            ax.set_ylabel(f"Jours d'étiage (Q < {s1:.2f} m³/s)", fontsize=10)
-            ax.set_title(f"{nom} — Précipitations et sévérité de l'étiage\n"
-                        f"Les années les plus sèches se traduisent-elles par des "
-                        f"étiages plus marqués sur cette station ? (bonus)",
+            ax.set_xlabel("Précipitations annuelles (mm) — années complètes uniquement",
+                         fontsize=10)
+            ax.set_ylabel(f"Jours de canicule aquatique (T_eau_max > {s_aig}°C)",
+                         fontsize=10)
+            ax.set_title(f"{nom} — Précipitations et sévérité thermique estivale\n"
+                        f"Taille des bulles ∝ nombre de jours d'étiage de l'année (bonus)",
                         fontsize=11, fontweight="bold")
             ax.grid(True, alpha=0.3)
             plt.tight_layout()
-            figs.append(_clim_fin(fig, output_dir, "Clim6_Precip_vs_Etiage.png"))
+            figs.append(_clim_fin(fig, output_dir, "Clim6_Precip_vs_Canicule.png"))
 
     print(f"  → {len(figs)} figure(s) climatique(s) produite(s)")
     return figs

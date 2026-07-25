@@ -182,55 +182,83 @@ def fig_sensibilite(res, nom, output_dir):
 
 
 def fig_vulnerabilite(vul, contexte, nom, output_dir, periode=None):
+    """
+    Vulnérabilité chronique et aiguë (juin-septembre), une courbe par année
+    plutôt qu'une chronique continue — même code couleur par année que la
+    figure fraie-croissance, pour une lecture cohérente entre les deux
+    onglets. `periode`, si fourni, filtre les ANNÉES affichées (l'axe des
+    abscisses n'est plus une chronologie réelle mais un calendrier
+    saisonnier juin-septembre commun à toutes les années).
+    """
     from .core import inserer_lacunes
     df_e = vul["df_ete"].copy()
-    df_e = inserer_lacunes(df_e, col_date="date_dt",
-                           cols_valeurs=["Tmh", "Tmh_norm", "T_eau_max", "Tmax_norm"],
-                           seuil_pas=3)
-    fig, axes = plt.subplots(2, 1, figsize=(10.5, 8.6), sharex=True)
+    df_e["date_dt"] = pd.to_datetime(df_e["date_dt"])
+    df_e["Year"] = df_e["date_dt"].dt.year
+    annees = sorted(df_e["Year"].unique())
+    if periode:
+        y0, y1 = periode[0].year, periode[1].year
+        annees = [a for a in annees if y0 <= a <= y1] or annees
+
+    fig, axes = plt.subplots(2, 1, figsize=(9.5, 8.2), sharex=True)
     fig.patch.set_facecolor("white")
-    ax1 = axes[0]; ax1.set_facecolor("#f8f9fa")
-    ax1.plot(df_e["date_dt"], df_e["Tmh"], color="#3498db", lw=2, alpha=0.5, ls="--", label="Tmh brute")
-    ax1.plot(df_e["date_dt"], df_e["Tmh_norm"], color="#2980b9", lw=2.5, label="Tmh normalisée")
+    ax1, ax2 = axes[0], axes[1]
+    ax1.set_facecolor("#f8f9fa"); ax2.set_facecolor("#f8f9fa")
+
+    x0_min = x1_max = None
+    for annee in annees:
+        sub = df_e[df_e["Year"] == annee].sort_values("date_dt")
+        if len(sub) < 2:
+            continue
+        sub = inserer_lacunes(sub, col_date="date_dt",
+                              cols_valeurs=["Tmh_norm", "Tmax_norm"], seuil_pas=3)
+        synth = sub["date_dt"].apply(lambda d: pd.Timestamp(2000, d.month, d.day)
+                                     if pd.notna(d) else pd.NaT)
+        col = _couleur_annee(annee)
+        ax1.plot(synth, sub["Tmh_norm"], color=col, lw=1.8, alpha=0.88, label=str(annee))
+        ax2.plot(synth, sub["Tmax_norm"], color=col, lw=1.8, alpha=0.88, label=str(annee))
+        vs = synth.dropna()
+        if len(vs):
+            x0_min = vs.min() if x0_min is None else min(x0_min, vs.min())
+            x1_max = vs.max() if x1_max is None else max(x1_max, vs.max())
+
     ax1.axhline(vul["seuil_chr"], color="#e67e22", lw=2, ls="--",
-                label=f"Seuil de stress systémique {vul['seuil_chr']}°C")
-    ax1.fill_between(df_e["date_dt"], vul["seuil_chr"], df_e["Tmh_norm"],
-                     where=df_e["Tmh_norm"] > vul["seuil_chr"], alpha=0.35, color="#e67e22",
-                     label=f"Dépassement {vul['seuil_chr']}°C ({vul['pct_chr']:.1f}%)")
-    ax1.set_xlabel("Date", fontsize=11)
+               label=f"Seuil de stress {vul['seuil_chr']}°C")
     ax1.set_ylabel("Température (°C)", fontsize=11)
-    ax1.set_title(f"Vulnérabilité Chronique — Tmh normalisée (juin–sept)\nStress systémique · [{contexte['label']}]",
-                  fontsize=11, fontweight="bold")
-    leg1 = ax1.legend(fontsize=8.5, loc="upper right")
-    style_legend(leg1)
+    ax1.set_title(f"Vulnérabilité Chronique — Tmh normalisée (juin–sept)\n"
+                 f"Stress systémique · [{contexte['label']}] · {vul['pct_chr']:.1f}% de dépassement",
+                 fontsize=11, fontweight="bold")
     ax1.grid(True, alpha=0.3)
-    # Le panneau du haut affiche ses propres libellés d'axe des abscisses
-    # (par défaut, sharex=True les masque, réservés au seul panneau du bas).
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b"))
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
     ax1.tick_params(axis="x", labelbottom=True, labelrotation=30)
 
-    ax2 = axes[1]; ax2.set_facecolor("#f8f9fa")
-    ax2.plot(df_e["date_dt"], df_e["T_eau_max"], color="#9b59b6", lw=2, alpha=0.5, ls="--", label="Tmax brute")
-    ax2.plot(df_e["date_dt"], df_e["Tmax_norm"], color="#8e44ad", lw=2.5, label="Tmax normalisée")
     ax2.axhline(vul["seuil_aigu"], color="#e74c3c", lw=2, ls="--",
-                label=f"Seuil de létalité systémique {vul['seuil_aigu']}°C")
-    ax2.fill_between(df_e["date_dt"], vul["seuil_aigu"], df_e["Tmax_norm"],
-                     where=df_e["Tmax_norm"] > vul["seuil_aigu"], alpha=0.4, color="#e74c3c",
-                     label=f"Dépassement {vul['seuil_aigu']}°C ({vul['n_aigu']}j)")
-    ax2.set_xlabel("Date", fontsize=11); ax2.set_ylabel("Température (°C)", fontsize=11)
-    ax2.set_title(f"Vulnérabilité Aiguë — Tmax normalisée (juin–sept)\nLétalité systémique · [{contexte['label']}]",
-                  fontsize=11, fontweight="bold")
-    leg2 = ax2.legend(fontsize=8.5, loc="upper right")
-    style_legend(leg2)
+               label=f"Seuil de létalité {vul['seuil_aigu']}°C")
+    ax2.set_xlabel("Date (calendrier saisonnier)", fontsize=11)
+    ax2.set_ylabel("Température (°C)", fontsize=11)
+    ax2.set_title(f"Vulnérabilité Aiguë — Tmax normalisée (juin–sept)\n"
+                 f"Létalité systémique · [{contexte['label']}] · {vul['n_aigu']} j de dépassement",
+                 fontsize=11, fontweight="bold")
     ax2.grid(True, alpha=0.3)
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b"))
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+    if x0_min is not None:
+        pad = (x1_max - x0_min) * 0.02
+        ax2.set_xlim(x0_min - pad, x1_max + pad)
     plt.setp(ax1.get_xticklabels(), rotation=30)
     plt.setp(ax2.get_xticklabels(), rotation=30)
-    if periode:
-        ax2.set_xlim(periode[0], periode[1])
+    # Légende unique pour toute la figure (une entrée par année, partagée
+    # entre les deux panneaux), sous le second panneau.
+    handles, labels = ax2.get_legend_handles_labels()
+    h1, l1 = ax1.get_legend_handles_labels()
+    for h, l in zip(h1, l1):
+        if l not in labels:
+            handles.append(h); labels.append(l)
+    leg = fig.legend(handles, labels, fontsize=8, loc="upper center",
+                     bbox_to_anchor=(0.5, 0.02), ncol=min(len(annees) + 2, 8),
+                     title="Année", title_fontsize=8.5)
+    style_legend(leg)
     plt.suptitle(f"{nom} — Vulnérabilité thermique\n{contexte['label']}",
-                 fontsize=13, fontweight="bold", y=1.01)
-    plt.tight_layout()
+                 fontsize=13, fontweight="bold", y=1.03)
+    plt.tight_layout(rect=[0, 0.05, 1, 1])
     return _finalise(fig, output_dir, "Fig2_Vulnerabilite.png")
 
 
@@ -241,82 +269,49 @@ def fig_vulnerabilite(vul, contexte, nom, output_dir, periode=None):
 
 NOMS_PHASE = {"prefrai": "Pré-frai", "ponte": "Ponte", "incubation": "Incubation"}
 
+# Palette qualitative déterministe par ANNÉE CIVILE (cycle sur 10 teintes) :
+# une année donnée porte toujours la même couleur, y compris d'une figure à
+# l'autre (fraie-croissance et vulnérabilité partagent ce code couleur, à la
+# demande d'une lecture cohérente entre les deux onglets).
+_PALETTE_ANNEES = plt.get_cmap("tab10").colors
 
-def _dessiner_campagne_fraie(ax, camp, phases, ylim, montrer_ylabel=True,
-                             montrer_legende=False, titre_campagne=None):
-    """Dessine une campagne (segment continu d'une saison de reproduction)
-    sur un axe : bandes de phase, courbe normalisée, repères au-dessus du
-    cadre. Utilisée aussi bien pour le cas mono-année que pour chaque
-    colonne de la grille multi-campagnes."""
-    ax.set_facecolor("#f8f9fa")
-    dates = camp["date_dt"].values
-    mois = pd.to_datetime(camp["date_dt"]).dt.month.values
 
-    deja_leg = set()
+def _couleur_annee(annee):
+    return _PALETTE_ANNEES[int(annee) % 10]
+
+
+def _mois_debut_saison(phases):
+    """Premier mois de la première phase (pré-frai) — sert de point de
+    bascule pour construire un calendrier synthétique sur lequel superposer
+    plusieurs campagnes, y compris celles à cheval sur le nouvel an."""
     for ph in phases:
-        if not ph.get("n"):
-            continue
-        msk = np.isin(mois, ph["mois"])
-        if not msk.any():
-            continue
-        o0, o1 = ph["opt"]; e0, e1 = ph["elargie"]
-        lab_o = "Optimum de la phase" if "o" not in deja_leg else None
-        lab_e = "Tolérance élargie (non létale)" if "e" not in deja_leg else None
-        lab_l = "Seuil létal / échec reproducteur" if "l" not in deja_leg else None
-        deja_leg |= {"o", "e", "l"}
-        ax.fill_between(dates, o0, o1, where=msk, color="#27ae60",
-                        alpha=0.20, zorder=0, label=lab_o, step="mid")
-        ax.fill_between(dates, o1, e1, where=msk, color="#F4D03F",
-                        alpha=0.22, zorder=0, label=lab_e, step="mid")
-        ax.fill_between(dates, e0, o0, where=msk, color="#F4D03F",
-                        alpha=0.22, zorder=0, step="mid")
-        ax.plot(dates, np.where(msk, e1, np.nan), color="#c0392b",
-                lw=1.6, ls="--", zorder=2, label=lab_l)
-        ax.plot(dates, np.where(msk, e0, np.nan), color="#c0392b",
-                lw=1.2, ls=":", zorder=2)
+        if ph.get("mois"):
+            return ph["mois"][0]
+    return 1
 
-    ax.plot(dates, camp["Tmh_norm_fraie"], color="#1A5276", lw=1.8, zorder=3,
-            label="T° eau normalisée")
-    ax.set_ylim(*ylim)
 
-    trans = ax.get_xaxis_transform()
-    for ph in phases:
-        if not ph.get("n"):
-            continue
-        msk = np.isin(mois, ph["mois"])
-        if msk.any():
-            idx = np.where(msk)[0]
-            x_mid = dates[idx[len(idx) // 2]]
-            lab = NOMS_PHASE.get(ph["cle"], ph["cle"])
-            ax.annotate(lab, xy=(x_mid, 1.05), xycoords=trans,
-                        fontsize=9, ha="center", va="bottom",
-                        fontweight="bold", color="#34495E",
-                        annotation_clip=False,
-                        bbox=dict(boxstyle="round,pad=0.2", facecolor="#EAECEE",
-                                  edgecolor="#AEB6BF", alpha=0.95))
-    if titre_campagne:
-        ax.set_title(titre_campagne, fontsize=9.5, color="#566573", pad=22)
-    ax.set_xlabel("Date", fontsize=9.5)
-    if montrer_ylabel:
-        ax.set_ylabel("T° eau normalisée (°C)", fontsize=9.5)
-    ax.grid(True, alpha=0.3)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
-    ax.tick_params(axis="x", labelsize=8, labelrotation=30)
-    ax.tick_params(axis="y", labelsize=8.5)
-    if montrer_legende:
-        leg = ax.legend(fontsize=8, loc="upper center",
-                        bbox_to_anchor=(0.5, -0.22), ncol=2, frameon=True)
-        style_legend(leg)
+def _synth_date(date, mois_debut):
+    """Date synthétique (année de référence 2000/2001) permettant de
+    superposer des campagnes réelles d'années différentes sur un même axe :
+    les mois postérieurs au début de la saison restent en 2000, ceux
+    antérieurs (fin d'une saison à cheval sur le nouvel an, ex. truite
+    janvier-mars) basculent en 2001 pour rester après dans la chronologie."""
+    yr = 2000 if date.month >= mois_debut else 2001
+    try:
+        return pd.Timestamp(year=yr, month=date.month, day=date.day)
+    except ValueError:
+        return pd.Timestamp(year=yr, month=date.month, day=28)
 
 
 def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
     """
     Vulnérabilité fraie-croissance, par espèce repère et par PHASE.
-    Lorsque la chronique couvre plusieurs années, chaque occurrence annuelle
-    de la fenêtre de reproduction (« campagne » — ex. automne-hiver pour la
-    truite) est présentée dans son propre panneau plutôt que sur un seul axe
-    continu : les campagnes deviennent directement comparables entre elles,
-    sur une échelle de température partagée par espèce.
+    Quand plusieurs années sont disponibles, chaque campagne (occurrence
+    annuelle de la fenêtre de reproduction) est superposée sur un même axe —
+    une couleur par année — plutôt que juxtaposée en petits multiples : les
+    campagnes restent directement comparables sans multiplier les panneaux
+    (et sans risque de chevauchement de titres lorsque les années sont
+    nombreuses).
     """
     if not fraie_res:
         return None
@@ -326,9 +321,17 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
 
     from .core import segments_valides
 
-    especes = []
-    for s in sous:
+    n = len(sous)
+    fig, axes = plt.subplots(n, 1, figsize=(9.5, 5.3 * n), squeeze=False)
+    fig.patch.set_facecolor("white")
+
+    for i, s in enumerate(sous):
+        ax = axes[i][0]
+        ax.set_facecolor("#f8f9fa")
         sub = s["sub"].sort_values("date_dt").reset_index(drop=True)
+        phases = s["phases"]
+        mois_debut = _mois_debut_saison(phases)
+
         segs = segments_valides(sub["date_dt"], sub["Tmh_norm_fraie"], seuil_pas=3)
         campagnes = []
         for dates_seg, _ in segs:
@@ -340,80 +343,124 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
                 campagnes.append(camp)
         if not campagnes:
             campagnes = [sub]
-        especes.append((s, campagnes))
-
-    n_rows = len(especes)
-    n_cols = max(len(c) for _, c in especes)
-    largeur = min(3.9 * n_cols + 1.3, 12.5)
-    fig = plt.figure(figsize=(largeur, 4.6 * n_rows))
-    fig.patch.set_facecolor("white")
-    gs = fig.add_gridspec(n_rows, n_cols, hspace=0.85, wspace=0.32)
-
-    for i, (s, campagnes) in enumerate(especes):
         multi = len(campagnes) > 1
-        all_vals = pd.concat([c["Tmh_norm_fraie"] for c in campagnes])
-        vmin, vmax = float(all_vals.min()), float(all_vals.max())
-        pad = (vmax - vmin) * 0.15 if vmax > vmin else 1.0
-        ylim = (vmin - pad, vmax + pad)
 
-        for j in range(n_cols):
-            if j >= len(campagnes):
-                fig.add_subplot(gs[i, j]).axis("off")
+        # Bandes de phase — tracées une seule fois sur le calendrier
+        # synthétique (elles sont invariantes d'une année sur l'autre).
+        synth_axis = pd.date_range("2000-01-01", "2001-12-31", freq="D")
+        deja_leg = set()
+        for ph in phases:
+            if not ph.get("n"):
                 continue
-            ax = fig.add_subplot(gs[i, j])
-            camp = campagnes[j]
-            titre_camp = None
-            if multi:
-                d0, d1 = camp["date_dt"].min(), camp["date_dt"].max()
-                titre_camp = f"Campagne {d0.strftime('%b %Y')} – {d1.strftime('%b %Y')}"
-            _dessiner_campagne_fraie(ax, camp, s["phases"], ylim,
-                                     montrer_ylabel=(j == 0),
-                                     montrer_legende=(j == 0),
-                                     titre_campagne=titre_camp)
+            msk = synth_axis.month.isin(ph["mois"])
+            if not msk.any():
+                continue
+            o0, o1 = ph["opt"]; e0, e1 = ph["elargie"]
+            lab_o = "Optimum de la phase" if "o" not in deja_leg else None
+            lab_e = "Tolérance élargie (non létale)" if "e" not in deja_leg else None
+            lab_l = "Seuil létal / échec reproducteur" if "l" not in deja_leg else None
+            deja_leg |= {"o", "e", "l"}
+            ax.fill_between(synth_axis, o0, o1, where=msk, color="#27ae60",
+                            alpha=0.20, zorder=0, label=lab_o, step="mid")
+            ax.fill_between(synth_axis, o1, e1, where=msk, color="#F4D03F",
+                            alpha=0.22, zorder=0, label=lab_e, step="mid")
+            ax.fill_between(synth_axis, e0, o0, where=msk, color="#F4D03F",
+                            alpha=0.22, zorder=0, step="mid")
+            ax.plot(synth_axis, np.where(msk, e1, np.nan), color="#c0392b",
+                    lw=1.4, ls="--", zorder=2, label=lab_l)
+            ax.plot(synth_axis, np.where(msk, e0, np.nan), color="#c0392b",
+                    lw=1.0, ls=":", zorder=2)
+
+        # Une courbe par campagne, couleur = année de début de campagne.
+        x0_min, x1_max = None, None
+        for camp in campagnes:
+            annee = int(camp["date_dt"].min().year)
+            synth_dates = camp["date_dt"].apply(lambda d: _synth_date(d, mois_debut))
+            lab = (f"{annee}" if not multi else
+                   (f"{annee}" if camp["date_dt"].min().year == camp["date_dt"].max().year
+                    else f"{annee}-{annee+1}"))
+            ax.plot(synth_dates, camp["Tmh_norm_fraie"], color=_couleur_annee(annee),
+                    lw=1.8, alpha=0.88, zorder=3, label=lab if multi else "T° eau normalisée")
+            x0_min = synth_dates.min() if x0_min is None else min(x0_min, synth_dates.min())
+            x1_max = synth_dates.max() if x1_max is None else max(x1_max, synth_dates.max())
+        if x0_min is not None:
+            pad = (x1_max - x0_min) * 0.03
+            ax.set_xlim(x0_min - pad, x1_max + pad)
+
+        # Repères de phase au-dessus du cadre (ne chevauchent ni courbes ni
+        # légende, celle-ci étant placée sous l'axe).
+        trans = ax.get_xaxis_transform()
+        for ph in phases:
+            if not ph.get("n"):
+                continue
+            mois_syn = synth_axis[synth_axis.month.isin(ph["mois"])]
+            mois_syn = mois_syn[(mois_syn >= (x0_min or mois_syn.min())) &
+                                (mois_syn <= (x1_max or mois_syn.max()))]
+            if len(mois_syn):
+                x_mid = mois_syn[len(mois_syn) // 2]
+                lab_p = NOMS_PHASE.get(ph["cle"], ph["cle"])
+                ax.annotate(lab_p, xy=(x_mid, 1.05), xycoords=trans,
+                            fontsize=9.5, ha="center", va="bottom",
+                            fontweight="bold", color="#34495E",
+                            annotation_clip=False,
+                            bbox=dict(boxstyle="round,pad=0.22", facecolor="#EAECEE",
+                                      edgecolor="#AEB6BF", alpha=0.95))
 
         limitant = (s["espece"] == fraie_res.get("espece_limitante"))
-        titre_espece = (f"{s['espece'].capitalize()}  |  optimum {s['pct_optimum']:.0f}% · "
-                        f"élargie {s['pct_elargie']:.0f}% · létal {s['pct_letal']:.0f}% "
-                        f"→ P={s['P']} ({s['cat']})"
-                        f"{'   ★ retenu' if limitant else ''}"
-                        f"{f'  —  {len(campagnes)} campagnes' if multi else ''}")
-        # Titre de ligne positionné au-dessus du premier axe de la ligne,
-        # dans les coordonnées de la figure (indépendant du nombre de
-        # colonnes réellement utilisées par cette espèce).
-        ax0 = fig.axes[i * n_cols]
-        bbox = ax0.get_position()
-        fig.text(0.02, bbox.y1 + 0.028, titre_espece, fontsize=10.5,
-                 fontweight="bold", ha="left", va="bottom",
-                 color="#1A5276" if limitant else "#555555")
+        titre = (f"{s['espece'].capitalize()}  |  optimum {s['pct_optimum']:.0f}% · "
+                 f"élargie {s['pct_elargie']:.0f}% · létal {s['pct_letal']:.0f}% "
+                 f"→ P={s['P']} ({s['cat']})"
+                 f"{'   ★ retenu' if limitant else ''}"
+                 f"{f'  —  {len(campagnes)} campagnes superposées' if multi else ''}")
+        ax.set_title(titre, fontsize=10.5, fontweight="bold",
+                     color="#1A5276" if limitant else "#555555", pad=32)
+        ax.set_xlabel("Date (calendrier saisonnier)", fontsize=9.5)
+        ax.set_ylabel("T° eau normalisée (°C)", fontsize=9.5)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+        ax.tick_params(axis="x", labelsize=8, labelrotation=30)
+        ax.tick_params(axis="y", labelsize=8.5)
+        ax.grid(True, alpha=0.3)
+        ncol_leg = min(len(campagnes), 6) if multi else 2
+        titre_leg = "Campagne" if multi else None
+        leg = ax.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.20),
+                        ncol=ncol_leg, frameon=True, title=titre_leg, title_fontsize=8.5)
+        style_legend(leg)
 
         info = (f"Coeff. saisonnier air→eau : {s['m_saison']:.2f}  ·  "
                 f"Sévérité moyenne (/3) : {s['sev_moy']:.2f}  ·  "
                 f"Froid {'bloquant (échec)' if s.get('froid_bloquant') else 'ralentissant'}  ·  "
                 f"[info] % brut hors optimum : {s.get('pct_brut', float('nan')):.0f}%")
-        fig.text(0.02, bbox.y1 + 0.008, info, fontsize=7.8, ha="left",
-                 va="bottom", color="#7F8C8D")
+        ax.text(0.5, 1.12, info, transform=ax.transAxes, fontsize=7.8, ha="center",
+               va="bottom", color="#7F8C8D")
 
     plt.suptitle(f"{nom} — Vulnérabilité fraie-croissance par phase\n"
                  f"{contexte['label']}", fontsize=13, fontweight="bold", y=1.0)
+    plt.tight_layout()
     return _finalise(fig, output_dir, "Fig3_Fraie_Croissance.png")
 
-def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
+
+
+def fig_synthese_tableau(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
+    """Tableau de synthèse SGVT, en figure autonome (voir fig_synthese_jauge
+    pour la jauge, désormais séparée pour laisser de la place aux deux)."""
     from .print_style import wrap_rows, apply_row_heights, table_fontsize, col_width_chars
     sg = sgvt_res; sr = sens_res; vr = vul_res; ctx = contexte["label"]
-    FIG_W = 11.5
-    fig, axes = plt.subplots(1, 2, figsize=(FIG_W, 6.6), gridspec_kw={"width_ratios": [2.1, 1]})
-    fig.patch.set_facecolor("white")
-    ax_t = axes[0]; ax_t.axis("off")
+    FIG_W = 9.5
+    fig, ax_t = plt.subplots(figsize=(FIG_W, 6.2))
+    fig.patch.set_facecolor("white"); ax_t.axis("off")
     pds = sg.get("poids", {"s": 0.30, "c": 0.40, "a": 0.30, "f": None})
     def _pct(w): return f"{int(round(w*100))}%" if w else "—"
     C = {k: f"#{v}" for k, v in {"h": "2C3E50", "bs": "2471A3", "bv": "1E8449",
          "bf": "B9770D", "bg": "6C3483", "bs_bg": "EBF5FB", "bv_bg": "EAFAF1",
          "bf_bg": "FEF9E7", "bg_bg": "F4ECF7", "r2": "D6EAF8", "rob": "D5F5E3"}.items()}
 
-    # Construction dynamique : chaque ligne porte sa propre couleur (fill, txt, gras)
-    ROWS = []  # (cells[5], fill, txtcolor, bold)
-    def SEP(txt, fill): ROWS.append(([txt, "", "", "", ""], fill, "white", True))
-    def LINE(cells, fill=None, txt=None, bold=False): ROWS.append((cells, fill, txt, bold))
+    # Chaque ligne porte sa couleur (fill, txt, gras) ; `section=True` marque
+    # les lignes de titre (SENSIBILITÉ, VULNÉRABILITÉ...), fusionnées
+    # visuellement sur toute la largeur du tableau plutôt que cantonnées à
+    # la première colonne (ce qui les forçait à un retour à la ligne serré).
+    ROWS = []  # (cells[5], fill, txtcolor, bold, section)
+    def SEP(txt, fill): ROWS.append(([txt, "", "", "", ""], fill, "white", True, True))
+    def LINE(cells, fill=None, txt=None, bold=False): ROWS.append((cells, fill, txt, bold, False))
 
     SEP("── SENSIBILITÉ ──", C["bs"])
     LINE(["Pente m", f'{sr["m"]:.3f}', sr["sens_cat"], str(sg["pts_s"]), _pct(pds["s"])], C["bs_bg"], "#1a5276")
@@ -423,7 +470,6 @@ def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
     SEP(f"── VULNÉRABILITÉ ESTIVALE · {ctx} ──", C["bv"])
     LINE([f"Tmh>{vr['seuil_chr']}°C  (stress systémique)", f'{vr["pct_chr"]:.1f}%', vr["cat_chr"], str(sg["pts_c"]), _pct(pds["c"])], C["bv_bg"], "#1a5276")
     LINE([f"Tmax>{vr['seuil_aigu']}°C  (létalité systémique)", f'{vr["n_aigu"]}j', vr["cat_aigu"], str(sg["pts_a"]), _pct(pds["a"])], C["bv_bg"], "#1a5276")
-    # Composante fraie-croissance (affichée même si non évaluée, pour transparence)
     fr = sg.get("fraie")
     if fr is not None:
         SEP("── FRAIE-CROISSANCE (hors étiage) ──", C["bf"])
@@ -439,7 +485,6 @@ def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
         else:
             LINE(["Composante non évaluée (chronique lacunaire)", "—",
                   "SGVT sur 3 comp.", "—", "—"], "#FCF3CF", "#7e5109")
-        # Détail de tous les sous-indicateurs (évalués et non évalués)
         for s in fr.get("sous_indicateurs", []):
             if disponible and s["espece"] == esp:
                 continue
@@ -448,9 +493,6 @@ def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
                 LINE([f"    ↳ {s['espece']}", f'{s["pct"]:.1f}%{rec}', s["cat"],
                       f'P={s["P"]}', "—"], "#FCF3CF", "#7e5109")
             else:
-                # Espèce non évaluable : le motif est porté par la nouvelle
-                # structure à phases (les champs de l'ancien modèle à fenêtre
-                # unique, comme n_central, n'existent plus à ce niveau).
                 motif = s.get("motif", "phases critiques non couvertes")
                 LINE([f"    ↳ {s['espece']}", str(motif),
                       "non évalué", "—", "—"], "#FADBD8", "#943126")
@@ -459,22 +501,24 @@ def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
           f'{sg["sgvt"]:.2f} / 10', sg["interp"], "—", "—"], C["bg_bg"], "#4A235A", True)
 
     rows_data = [r[0] for r in ROWS]
-    # ax_t n'occupe qu'une partie de la figure (gridspec width_ratios
-    # [2.1, 1], soit ~68 % de FIG_W) — le budget de caractères doit se baser
-    # sur la largeur RÉELLE de cet axe, pas sur la figure entière, sous peine
-    # de sous-estimer le débordement (c'était l'origine du bug signalé).
-    AX_T_FRAC = 2.1 / (2.1 + 1) * 0.92   # 0.92 = marge de sécurité (tight_layout)
-    ax_t_width_in = FIG_W * AX_T_FRAC
     fs_tbl_print = table_fontsize(FIG_W)  # anticipe la police d'impression
-    FS_ECRAN = 9.5
-    col_chars = [col_width_chars(0.36, ax_t_width_in, fs_tbl_print),
-                col_width_chars(0.22, ax_t_width_in, fs_tbl_print),
-                col_width_chars(0.26, ax_t_width_in, fs_tbl_print),
-                None, None]
-    wrapped, counts = wrap_rows(rows_data, col_chars=col_chars)
-    tbl = ax_t.table(cellText=wrapped,
+    FS_ECRAN = 10.0
+    # Colonnes normales : budget calé sur leur propre largeur. Lignes de
+    # section fusionnées : le texte peut utiliser la largeur TOTALE du
+    # tableau (colonnes 1 à 5 réunies), d'où un wrap bien plus généreux.
+    col_chars_normal = [col_width_chars(0.34, FIG_W * 0.92, fs_tbl_print),
+                        col_width_chars(0.24, FIG_W * 0.92, fs_tbl_print),
+                        col_width_chars(0.26, FIG_W * 0.92, fs_tbl_print), None, None]
+    col_chars_section = [col_width_chars(0.98, FIG_W * 0.92, fs_tbl_print), None, None, None, None]
+    rows_wrapped, counts = [], []
+    for cells, (_, _, _, _, is_section) in zip(rows_data, ROWS):
+        cc = col_chars_section if is_section else col_chars_normal
+        w, c = wrap_rows([cells], col_chars=cc)
+        rows_wrapped.append(w[0]); counts.append(c[0])
+
+    tbl = ax_t.table(cellText=rows_wrapped,
                      colLabels=["Paramètre", "Valeur", "Catégorie", "Pts", "Poids"],
-                     colWidths=[0.36, 0.22, 0.26, 0.08, 0.08], cellLoc="left",
+                     colWidths=[0.34, 0.24, 0.26, 0.08, 0.08], cellLoc="left",
                      loc="center", bbox=[0, 0, 1, 1])
     tbl.auto_set_font_size(False); tbl.set_fontsize(FS_ECRAN)
     apply_row_heights(tbl, counts)
@@ -483,19 +527,31 @@ def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
         if row == 0:
             cell.set_facecolor(C["h"]); cell.set_text_props(color="white", fontweight="bold")
             continue
-        cells, fill, txt, bold = ROWS[row - 1]
+        cells, fill, txt, bold, is_section = ROWS[row - 1]
         if fill: cell.set_facecolor(fill)
         elif row % 2 == 0: cell.set_facecolor("#f5f5f5")
         props = {}
         if txt: props["color"] = txt
         if bold: props["fontweight"] = "bold"
         if props: cell.set_text_props(**props)
+        if is_section:
+            # Fusion visuelle : masque les bordures internes entre les 5
+            # cellules de la ligne (même couleur de fond déjà appliquée) et
+            # aligne le texte à gauche sur toute la largeur.
+            cell.visible_edges = "TB" if col > 0 else "TBL"
+            if col == 4:
+                cell.visible_edges += "R"
     ax_t.set_title(f"Tableau de synthèse — {ctx}", fontsize=13, fontweight="bold", pad=15)
+    plt.tight_layout()
+    return _finalise(fig, output_dir, "Fig3a_Synthese_Tableau.png")
 
-    ax_g = axes[1]; ax_g.axis("off")
-    # Bande du donut élargie (r_out - r_in) et aspect forcé à l'égalité pour
-    # que la jauge ne soit plus étirée verticalement par la hauteur allouée
-    # à la colonne (elle occupe ainsi moins de hauteur visuelle, comme demandé).
+
+def fig_synthese_jauge(sgvt_res, nom, output_dir):
+    """Jauge SGVT en figure autonome — davantage d'espace que dans l'ancienne
+    version combinée avec le tableau, pour éviter tout chevauchement de texte."""
+    sg = sgvt_res
+    fig, ax_g = plt.subplots(figsize=(7.5, 6.0))
+    fig.patch.set_facecolor("white")
     r_out, r_in = 1.0, 0.55
     for vmin, vmax, color, label in [(0, 2, "#27ae60", "Risque\nFaible\n[0–2]"),
                                      (2, 5, "#f39c12", "Risque\nModéré\n[2–5]"),
@@ -507,23 +563,23 @@ def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
         ax_g.fill(np.concatenate([xo, xi]), np.concatenate([yo, yi]), color=color, alpha=0.9)
         mid = np.pi - ((vmin+vmax)/2/10)*np.pi
         ax_g.text(1.20*np.cos(mid), 1.20*np.sin(mid), label,
-                  ha="center", va="center", fontsize=9, color=color, fontweight="bold")
+                  ha="center", va="center", fontsize=10.5, color=color, fontweight="bold")
     ang_n = np.pi - (sg["sgvt"]/10)*np.pi
     ax_g.annotate("", xy=(r_in*1.14*np.cos(ang_n), r_in*1.14*np.sin(ang_n)), xytext=(0, 0),
-                  arrowprops=dict(arrowstyle="->", color="black", lw=2.5))
-    ax_g.plot(0, 0, "ko", ms=8)
-    ax_g.text(0, -0.10, f'SGVT = {sg["sgvt"]:.1f} / 10', ha="center", fontsize=16, fontweight="bold")
-    ax_g.text(0, -0.29, sg["interp"], ha="center", fontsize=11, color=sg["color"], fontweight="bold")
-    ax_g.text(0, -0.47, f'R² = {sg["r2"]:.3f}  ({sg["r2_cat"]})', ha="center", fontsize=9, color="#154360")
-    ax_g.text(0, -0.65, f'Robustesse |ρ−r| = {sg["robustesse"]:.4f}', ha="center", fontsize=9, color="#1e8449")
-    ax_g.text(0, -0.83, sg["rob_cat"], ha="center", fontsize=9, color="#1e8449")
-    ax_g.set_xlim(-1.5, 1.5); ax_g.set_ylim(-0.98, 1.30)
+                  arrowprops=dict(arrowstyle="->", color="black", lw=3))
+    ax_g.plot(0, 0, "ko", ms=9)
+    ax_g.text(0, -0.14, f'SGVT = {sg["sgvt"]:.1f} / 10', ha="center", fontsize=19, fontweight="bold")
+    ax_g.text(0, -0.36, sg["interp"], ha="center", fontsize=13, color=sg["color"], fontweight="bold")
+    ax_g.text(0, -0.58, f'R² = {sg["r2"]:.3f}  ({sg["r2_cat"]})', ha="center", fontsize=10.5, color="#154360")
+    ax_g.text(0, -0.78, f'Robustesse |ρ−r| = {sg["robustesse"]:.4f}', ha="center", fontsize=10.5, color="#1e8449")
+    ax_g.text(0, -0.98, sg["rob_cat"], ha="center", fontsize=10.5, color="#1e8449")
+    ax_g.set_xlim(-1.5, 1.5); ax_g.set_ylim(-1.18, 1.30)
     ax_g.set_aspect("equal", adjustable="box")
-    ax_g.set_title("Score Global de\nVulnérabilité Thermique\n(information d'appoint)",
-                   fontsize=12, fontweight="bold", pad=8)
-    plt.suptitle(f"{nom} — Synthèse thermique\n{ctx}", fontsize=14, fontweight="bold", y=1.02)
+    ax_g.axis("off")
+    ax_g.set_title(f"{nom} — Score Global de Vulnérabilité Thermique\n"
+                   "(information d'appoint)", fontsize=13, fontweight="bold", pad=12)
     plt.tight_layout()
-    return _finalise(fig, output_dir, "Fig3_Synthese_SGVT.png")
+    return _finalise(fig, output_dir, "Fig3b_Synthese_Jauge.png")
 
 
 # ============================================================

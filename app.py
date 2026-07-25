@@ -340,9 +340,16 @@ with ong[0]:
                           "Matrice_Diagnostic.png")
         st.divider()
 
-    if res.figures.get("synthese") is not None:
-        st.pyplot(res.figures["synthese"])
-        _fig_download(res.figures["synthese"], "⬇️ PNG synthèse", "Synthese_SGVT.png")
+    if res.figures.get("synthese_tableau") is not None:
+        col_tbl, col_gauge = st.columns([1.5, 1])
+        with col_tbl:
+            st.pyplot(res.figures["synthese_tableau"])
+            _fig_download(res.figures["synthese_tableau"], "⬇️ PNG tableau",
+                         "Synthese_Tableau.png")
+        with col_gauge:
+            st.pyplot(res.figures["synthese_jauge"])
+            _fig_download(res.figures["synthese_jauge"], "⬇️ PNG jauge SGVT",
+                         "Synthese_Jauge.png")
     if res.figures.get("chronique") is not None:
         st.subheader("Chronique thermique")
         # Régénérée à la volée (plutôt que la version figée du dernier

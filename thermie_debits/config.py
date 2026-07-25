@@ -10,16 +10,19 @@ from typing import Optional
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
 # ============================================================
-__version__ = "3.4"
-VERSION_DATE = "2026-07-26"
+__version__ = "3.5"
+VERSION_DATE = "2026-07-27"
 VERSION_NOTES = (
-    "Correctifs suite retours utilisateur : polices écran redevenues modestes "
-    "(le plancher d'impression ne s'applique plus qu'au téléchargement), "
-    "légendes réellement translucides, période d'affichage réactive en "
-    "temps réel (format JJ/MM/AAAA), fraie-croissance en petits multiples "
-    "par campagne annuelle quand plusieurs années sont disponibles, "
-    "corrélations débit (indicateurs) régressées sur log(Q), volet "
-    "climatique revenu en matplotlib (+ 1 graphique bonus précip./étiage)"
+    "SGVT : jauge et tableau scindés en 2 figures autonomes (fini le "
+    "chevauchement, plus de place pour chacune) ; lignes de section du "
+    "tableau (SENSIBILITÉ, VULNÉRABILITÉ...) fusionnées visuellement sur "
+    "toute la largeur. Fraie-croissance et Vulnérabilité (juin-sept) : les "
+    "années sont superposées sur un même axe avec une couleur par année "
+    "(palette commune aux deux figures) plutôt que juxtaposées en petits "
+    "multiples — gère les fenêtres à cheval sur le nouvel an (truite) via "
+    "un calendrier saisonnier synthétique. Climatique : graphique bonus "
+    "revu (précipitations en X, jours de canicule aquatique en Y, taille "
+    "des bulles = jours d'étiage), limité aux années à couverture complète."
 )
 
 

@@ -155,7 +155,8 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
     F["vulnerabilite"] = figmod.fig_vulnerabilite(vul, ctx, nom, out, periode=config.periode_affichage)
     if fraie:
         F["fraie"]     = figmod.fig_fraie_croissance(fraie, ctx, nom, out)
-    F["synthese"]      = figmod.fig_synthese(sens, vul, sgvt, ctx, nom, out)
+    F["synthese_tableau"] = figmod.fig_synthese_tableau(sens, vul, sgvt, ctx, nom, out)
+    F["synthese_jauge"]   = figmod.fig_synthese_jauge(sgvt, nom, out)
 
     # ---- 6bis. Indicateurs bruts/compensés + corrélations ----
     from . import indicateurs as indmod

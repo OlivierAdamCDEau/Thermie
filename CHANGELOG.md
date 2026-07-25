@@ -1,5 +1,28 @@
 # Journal des versions
 
+## 3.5 — 2026-07-27
+- **SGVT** : la jauge et le tableau de synthèse sont désormais deux figures
+  autonomes (`fig_synthese_tableau` / `fig_synthese_jauge`) — la jauge
+  dispose de bien plus de place et ne chevauche plus aucun texte ; le
+  tableau, libéré de la contrainte de largeur partagée, gagne en lisibilité.
+- **Tableau de synthèse** : les lignes de titre de section (SENSIBILITÉ,
+  VULNÉRABILITÉ ESTIVALE, FRAIE-CROISSANCE, SCORE GLOBAL) sont fusionnées
+  visuellement sur toute la largeur du tableau (bordures internes masquées)
+  au lieu d'être cantonnées à la première colonne, ce qui forçait un retour
+  à la ligne serré et peu lisible.
+- **Fraie-croissance** : remplacement de la grille de panneaux par
+  campagne (qui pouvait chevaucher ses titres avec de nombreuses années)
+  par une **superposition sur un seul axe**, une couleur par année. Un
+  calendrier saisonnier synthétique gère correctement les fenêtres à cheval
+  sur le nouvel an (truite, octobre-mars).
+- **Vulnérabilité (juin-septembre)** : même principe de superposition par
+  année, avec la **même palette de couleurs** que la figure fraie-croissance
+  (une année = une couleur, cohérente entre les deux onglets).
+- **Climatique** : graphique bonus revu — précipitations annuelles en
+  abscisse (années à couverture complète uniquement), jours de canicule
+  aquatique (T_eau_max > seuil létal) en ordonnée, taille des bulles
+  proportionnelle aux jours d'étiage de l'année (annoté sous chaque point).
+
 ## 3.4 — 2026-07-26
 - **Correctif majeur — polices trop grandes à l'écran** : le plancher de
   lisibilité à l'impression (8 pt à 16/24,7 cm) s'appliquait par erreur
