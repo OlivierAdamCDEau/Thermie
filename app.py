@@ -145,6 +145,22 @@ with st.sidebar.expander("🐟 Paramètres de reproduction (lecture)"):
 
 faire_clim = st.sidebar.checkbox("Inclure le volet climatique (bonus)", False)
 
+with st.sidebar.expander("📅 Période affichée (optionnelle)"):
+    st.caption("Restreint uniquement la fenêtre visible des graphiques "
+               "chroniques (Synthèse, QC, Vulnérabilité) — les calculs "
+               "(SGVT, vulnérabilité, débits) portent toujours sur la "
+               "chronique complète.")
+    restreindre_periode = st.checkbox("Fixer une période d'affichage", False)
+    periode_affichage = None
+    if restreindre_periode:
+        c1, c2 = st.columns(2)
+        d_deb = c1.date_input("Du", value=None, key="periode_deb")
+        d_fin = c2.date_input("Au", value=None, key="periode_fin")
+        if d_deb and d_fin and d_deb < d_fin:
+            periode_affichage = (pd.Timestamp(d_deb), pd.Timestamp(d_fin))
+        elif d_deb and d_fin:
+            st.warning("La date de début doit précéder la date de fin.")
+
 # --- Mapping manuel colonnes / feuille Excel ---
 eau_cd = eau_ct = air_cd = air_ct = None
 eau_feuille = air_feuille = None
@@ -248,7 +264,8 @@ if lancer:
                         normales_min_annees=norm_min_ans,
                         normalisation_lissage_delta=liss_delta,
                         stress_plancher_pct=stress_plancher,
-                        stress_corr_r2_min=stress_r2, output_dir=None)
+                        stress_corr_r2_min=stress_r2,
+                        periode_affichage=periode_affichage, output_dir=None)
     with st.spinner("Analyse en cours..."):
         try:
             res = run(cfg, verbose=False)
@@ -323,6 +340,7 @@ with ong[0]:
     if res.figures.get("chronique") is not None:
         st.subheader("Chronique thermique")
         st.pyplot(res.figures["chronique"])
+        _fig_download(res.figures["chronique"], "⬇️ PNG chronique", "Chronique_Thermique.png")
 
 with ong[1]:
     st.subheader("Contrôle qualité — artefacts écartés")
@@ -331,6 +349,7 @@ with ong[1]:
         st.write(f"**{len(rq)} enregistrement(s) écarté(s)**")
         if res.figures.get("qc") is not None:
             st.pyplot(res.figures["qc"])
+            _fig_download(res.figures["qc"], "⬇️ PNG contrôle qualité", "QC_Artefacts.png")
         st.dataframe(rq, use_container_width=True, height=260)
         st.download_button("⬇️ Rapport QC (CSV)",
                            rq.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
@@ -346,6 +365,7 @@ with ong[2]:
     c3.metric("Robustesse |ρ−r|", f"{s['robustesse']:.4f}", s["rob_cat"])
     if res.figures.get("sensibilite") is not None:
         st.pyplot(res.figures["sensibilite"])
+        _fig_download(res.figures["sensibilite"], "⬇️ PNG sensibilité", "Sensibilite.png")
 
 with ong[3]:
     v = res.vulnerabilite
@@ -354,6 +374,7 @@ with ong[3]:
     c2.metric(f"Létalité aiguë (>{v['seuil_aigu']}°C)", f"{v['n_aigu']} j", v["cat_aigu"])
     if res.figures.get("vulnerabilite") is not None:
         st.pyplot(res.figures["vulnerabilite"])
+        _fig_download(res.figures["vulnerabilite"], "⬇️ PNG vulnérabilité", "Vulnerabilite.png")
 
 with ong[4]:
     fr = res.fraie
@@ -440,6 +461,17 @@ with ong[4]:
                     st.markdown(f"**{e.capitalize()}** — {src}")
     if res.figures.get("fraie") is not None:
         st.pyplot(res.figures["fraie"])
+        _fig_download(res.figures["fraie"], "⬇️ PNG fraie-croissance", "Fraie_Croissance.png")
+    if fr:
+        from thermie_debits.exports import construire_fraie_xlsx_bytes
+        try:
+            xlsx_bytes = construire_fraie_xlsx_bytes(fr, nom_ce)
+            st.download_button(
+                "⬇️ Détail fraie-croissance (XLSX — synthèse + phases)",
+                xlsx_bytes, "Fraie_Croissance_Detail.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except Exception as e:
+            st.caption(f"(export XLSX indisponible : {e})")
 
 # Indicateurs
 if "📉 Indicateurs" in noms and res.indicateurs is not None:
@@ -454,6 +486,11 @@ if "📉 Indicateurs" in noms and res.indicateurs is not None:
             "⬇️ Indicateurs (CSV)",
             table.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
             "indicateurs_thermiques.csv", "text/csv")
+
+        if res.figures.get("indicateurs_resume") is not None:
+            st.pyplot(res.figures["indicateurs_resume"])
+            _fig_download(res.figures["indicateurs_resume"],
+                          "⬇️ PNG indicateurs (mensuel/annuel)", "Indicateurs_Resume.png")
 
         st.subheader("Corrélations")
         cors = res.indicateurs["correlations"]
@@ -635,16 +672,29 @@ if res.config.avec_debits and "💧 Débits" in noms:
                         f"réduirait pas significativement le stress observé.")
 
         st.divider()
-        for k, t in [("debits_vuln", "Q_thermie_bio — vulnérabilité vs débit"),
-                     ("debits_inflexion", "Q_thermie_fonc — inflexion thermique"),
-                     ("debits_classes", "Débits classés (PNDA)")]:
+        for k, t, fn in [("debits_vuln", "Q_thermie_bio — vulnérabilité vs débit", "Debits_Vuln.png"),
+                        ("debits_inflexion", "Q_thermie_fonc — inflexion thermique", "Debits_Inflexion.png"),
+                        ("debits_classes", "Débits classés (PNDA)", "Debits_Classes_PNDA.png")]:
             if res.figures.get(k) is not None:
                 st.subheader(t)
                 st.pyplot(res.figures[k])
+                _fig_download(res.figures[k], f"⬇️ PNG {t}", fn)
 
 # Climatique
 if res.figures_climatiques and "🌍 Climatique" in noms:
     with ong[noms.index("🌍 Climatique")]:
-        st.caption("Volet descriptif sur données brutes (contexte observé réel).")
-        for f in res.figures_climatiques:
-            st.pyplot(f)
+        st.caption("Volet descriptif sur données brutes (contexte observé réel). "
+                   "Graphiques interactifs (zoom, survol, export via l'icône "
+                   "appareil photo en haut à droite de chaque graphique).")
+        for i, f in enumerate(res.figures_climatiques):
+            st.plotly_chart(f, use_container_width=True,
+                            key=f"clim_{i}", config={"displaylogo": False})
+            try:
+                png = f.to_image(format="png", scale=2, width=1000, height=460)
+                titre = (f.layout.title.text or f"climatique_{i}").split("<br>")[0]
+                st.download_button(f"⬇️ PNG — {titre}", png,
+                                   f"Climatique_{i+1}_{titre[:30].replace(' ','_')}.png",
+                                   "image/png", key=f"dl_clim_{i}")
+            except Exception:
+                st.caption("(export PNG indisponible — utilisez l'icône appareil "
+                           "photo du graphique)")

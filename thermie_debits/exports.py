@@ -213,3 +213,97 @@ def exporter_synthese_xlsx(sens, vul, sgvt, contexte, nom, localisation, output_
 #   Produit des figures de contextualisation : tendance thermique,
 #   étiages, débit estival, température de l'eau, précipitations.
 #   N'alimente PAS les débits de référence — purement contextuel.
+
+
+# ============================================================
+# EXPORT XLSX — Fraie-croissance (détail par espèce et par phase)
+# ============================================================
+def construire_fraie_xlsx_bytes(fraie_res, nom):
+    """
+    Construit un classeur XLSX (en mémoire) détaillant la composante
+    fraie-croissance : synthèse par espèce puis détail par phase de
+    reproduction (pré-frai / ponte / incubation), avec les % bruts en
+    information. Retourne les octets du fichier (utilisable directement
+    dans un st.download_button, ou écrit sur disque par l'appelant CLI).
+    """
+    import io
+    wb = openpyxl.Workbook()
+
+    hdr_fill = PatternFill("solid", fgColor="1A5276")
+    hdr_font = Font(color="FFFFFF", bold=True)
+    bold = Font(bold=True)
+    wrap = Alignment(wrap_text=True, vertical="top")
+    thin = Side(style="thin", color="BFC9CA")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def _header(ws, cols, widths):
+        for i, (c, w) in enumerate(zip(cols, widths), start=1):
+            cell = ws.cell(row=1, column=i, value=c)
+            cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
+
+    # ---- Feuille 1 : synthèse par espèce ----
+    ws1 = wb.active; ws1.title = "Synthèse espèces"
+    cols1 = ["Espèce", "Statut", "% optimum", "% élargie", "% létal",
+             "Sévérité moyenne (/3)", "Classe", "P", "Froid", "Repère retenu"]
+    _header(ws1, cols1, [16, 13, 11, 11, 10, 18, 26, 6, 16, 14])
+    r = 2
+    esp_lim = fraie_res.get("espece_limitante") if fraie_res else None
+    for s in (fraie_res or {}).get("sous_indicateurs", []):
+        vals = [s["espece"],
+                "évalué" if s.get("evalue") else "non évalué",
+                round(s["pct_optimum"], 1) if s.get("evalue") else None,
+                round(s["pct_elargie"], 1) if s.get("evalue") else None,
+                round(s["pct_letal"], 1) if s.get("evalue") else None,
+                round(s["sev_moy"], 2) if s.get("evalue") else None,
+                s.get("cat") or s.get("motif", "—"),
+                s.get("P", "—"),
+                "bloquant" if s.get("froid_bloquant") else "ralentissant",
+                "★" if s["espece"] == esp_lim else ""]
+        for c, v in enumerate(vals, start=1):
+            cell = ws1.cell(row=r, column=c, value=v)
+            cell.border = border
+            if c == 7: cell.alignment = wrap
+        r += 1
+
+    # ---- Feuille 2 : détail par phase ----
+    ws2 = wb.create_sheet("Détail par phase")
+    cols2 = ["Espèce", "Phase", "Critique", "Mois", "Optimum (°C)",
+             "Élargie (°C)", "n (jours)", "% optimum", "% élargie", "% létal",
+             "Mois central couvert", "% optimum (brut)", "% élargie (brut)",
+             "% létal (brut)"]
+    _header(ws2, cols2, [14, 22, 9, 16, 13, 13, 9, 10, 10, 9, 18, 14, 14, 12])
+    r = 2
+    for s in (fraie_res or {}).get("sous_indicateurs", []):
+        for ph in s.get("phases", []):
+            vals = [s["espece"], ph["nom"], "oui" if ph.get("critique") else "non",
+                    "-".join(str(m) for m in ph.get("mois", [])),
+                    f"{ph['opt'][0]:.0f}–{ph['opt'][1]:.0f}" if ph.get("n") else "—",
+                    f"{ph['elargie'][0]:.0f}–{ph['elargie'][1]:.0f}" if ph.get("n") else "—",
+                    ph.get("n", 0),
+                    round(ph["pct_optimum"], 1) if ph.get("n") else None,
+                    round(ph["pct_elargie"], 1) if ph.get("n") else None,
+                    round(ph["pct_letal"], 1) if ph.get("n") else None,
+                    "oui" if ph.get("evaluee") else "non",
+                    round(ph.get("pct_optimum_brut", float("nan")), 1) if ph.get("n") else None,
+                    round(ph.get("pct_elargie_brut", float("nan")), 1) if ph.get("n") else None,
+                    round(ph.get("pct_letal_brut", float("nan")), 1) if ph.get("n") else None]
+            for c, v in enumerate(vals, start=1):
+                ws2.cell(row=r, column=c, value=v).border = border
+            r += 1
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def exporter_fraie_xlsx(fraie_res, nom, output_dir):
+    """Écrit le classeur fraie-croissance sur disque (mode CLI)."""
+    if not fraie_res:
+        return
+    data = construire_fraie_xlsx_bytes(fraie_res, nom)
+    path = f"{output_dir}Fraie_Croissance_Detail.xlsx"
+    with open(path, "wb") as f:
+        f.write(data)
+    print(f"✅ Fraie_Croissance_Detail.xlsx")

@@ -12,8 +12,9 @@ CONFIG = AnalyseConfig(
         nom_cours_eau = "Cours d'eau", localisation_sonde = "Localisation",
         nom_station_debit = "Station hydrométrique"),
     qc=QCConfig(), contexte_piscicole="intermediaire", mode="thermie_debits",
-    faire_volet_climatique=False, seuil_comblement_desinf=0.10,
+    faire_volet_climatique=True, seuil_comblement_desinf=0.10,
     normales_fenetre_lissage=10, normales_min_annees=20,
+    normalisation_lissage_delta=7,
     stress_plancher_pct=10.0, stress_corr_r2_min=0.10,
     output_dir=str(_ICI / "outputs") + "/")
 if __name__ == "__main__":

@@ -10,15 +10,18 @@ from typing import Optional
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
 # ============================================================
-__version__ = "3.2"
-VERSION_DATE = "2026-07-24"
+__version__ = "3.3"
+VERSION_DATE = "2026-07-25"
 VERSION_NOTES = (
-    "Fraie en 3 phases (pré-frai / ponte / incubation) avec seuils propres · "
-    "froid bloquant selon l'espèce · matrice de diagnostic à deux entrées · "
-    "relation Q–T° en source unique (contrôle par l'air lissé) · "
-    "correctifs d'affichage sur les espèces non évaluables · anomalie d'air "
-    "lissée pour la compensation (série normalisée débruitée) · chronique "
-    "affichant l'eau brute ET compensée"
+    "Mise en forme pour restitution Word : polices garanties lisibles à "
+    "l'impression (portrait 16 cm / paysage 24,7 cm), tableaux à retour à la "
+    "ligne, légendes semi-transparentes repositionnées · jauge SGVT élargie "
+    "et moins haute · coupure des lacunes généralisée + fenêtre d'affichage "
+    "optionnelle · figure fraie-croissance et export XLSX dédié · nouvelle "
+    "figure de synthèse des indicateurs mensuels (+ échelle log) · échelle "
+    "log sur les graphiques débit (indicateurs, relation Q–T°) · libellés "
+    "d'axe sur les deux panneaux de vulnérabilité · onglet Climatique "
+    "converti en Plotly (interactif, axes d'années propres, seuils explicités)"
 )
 
 
@@ -310,6 +313,11 @@ class AnalyseConfig:
     # Déclenchement du volet stress de Q_thermie_bio (2 verrous cumulatifs)
     stress_plancher_pct: float = 10.0            # matérialité (% jours stressés)
     stress_corr_r2_min: float = 0.10             # causalité (R² min Q↔Tmh)
+    # Fenêtre d'affichage optionnelle pour les chroniques (Synthèse, QC,
+    # Vulnérabilité) : ne restreint QUE l'axe visible des graphiques, jamais
+    # les calculs (SGVT, vulnérabilité, débits portent toujours sur la
+    # chronique complète). None = pas de restriction (période complète).
+    periode_affichage: Optional[tuple] = None
 
     def contexte(self) -> dict:
         if self.contexte_piscicole not in CONTEXTES:

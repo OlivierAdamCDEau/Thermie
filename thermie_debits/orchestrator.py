@@ -149,10 +149,10 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
 
     # ---- 6. Figures thermiques (toujours) ----
     F = res.figures
-    F["chronique"]     = figmod.fig_chronique(df, nom, out)
-    F["qc"]            = figmod.fig_qc(daily_eau, rapport, df_air, nom, out)
+    F["chronique"]     = figmod.fig_chronique(df, nom, out, periode=config.periode_affichage)
+    F["qc"]            = figmod.fig_qc(daily_eau, rapport, df_air, nom, out, periode=config.periode_affichage)
     F["sensibilite"]   = figmod.fig_sensibilite(sens, nom, out)
-    F["vulnerabilite"] = figmod.fig_vulnerabilite(vul, ctx, nom, out)
+    F["vulnerabilite"] = figmod.fig_vulnerabilite(vul, ctx, nom, out, periode=config.periode_affichage)
     if fraie:
         F["fraie"]     = figmod.fig_fraie_croissance(fraie, ctx, nom, out)
     F["synthese"]      = figmod.fig_synthese(sens, vul, sgvt, ctx, nom, out)
@@ -162,6 +162,8 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
     res.indicateurs = indmod.calcul_indicateurs(df, sub_eau, verbose=verbose)
     F["correlations"] = figmod.fig_correlations_indicateurs(
         res.indicateurs["correlations"], nom, out)
+    F["indicateurs_resume"] = figmod.fig_indicateurs_resume(
+        res.indicateurs["table_mensuelle"], nom, out)
 
     # ---- 6ter. Test PRÉALABLE : le débit module-t-il la température ? ----
     # Postulat fondateur de toute l'approche « débits thermiques ». Le verdict
@@ -243,6 +245,7 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
             sens, vul, sgvt, ctx, nom, config.sources.localisation_sonde, out,
             debit_res=res.debits_inflexion, cst_res=res.debits_reference,
             df_q_all=res.df_q_all, base=res.base_debit)
+        expmod.exporter_fraie_xlsx(fraie, nom, out)
 
     # ---- 9. Volet climatique (bonus) ----
     if config.faire_volet_climatique:

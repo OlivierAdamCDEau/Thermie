@@ -1,5 +1,31 @@
 # Journal des versions
 
+## 3.3 — 2026-07-25
+- **Impression/Word** : toutes les figures garantissent désormais une police
+  ≥ 8 pt une fois collées à 16 cm (portrait) ou 24,7 cm (paysage) — plancher
+  calculé automatiquement selon la largeur réelle de chaque figure
+  (`print_style.py`). Tailles de figure resserrées en conséquence.
+- **Tableaux** : retour à la ligne automatique dans les tableaux matplotlib
+  (synthèse SGVT, sensibilité) pour ne plus tronquer une valeur trop longue.
+- **Légendes** : fond semi-opaque systématique pour ne plus masquer une
+  courbe ; repositionnées hors du graphique sur la figure fraie-croissance.
+- **Jauge SGVT** : bande colorée élargie, aspect forcé à l'égalité (moins
+  étirée verticalement).
+- **Chroniques** : coupure des lacunes généralisée (QC, vulnérabilité) ;
+  fenêtre d'affichage optionnelle (période fixe) sans jamais modifier les
+  calculs sous-jacents.
+- **Fraie-croissance** : repères de phase et légende repositionnés sans
+  chevauchement (vérifié) ; export XLSX dédié (synthèse + détail par phase).
+- **Indicateurs** : nouvelle figure de synthèse mensuelle/annuelle ; échelle
+  log sur les deux corrélations à débit en abscisse.
+- **Vulnérabilité** : libellés de l'axe des dates sur les deux panneaux
+  (haut et bas), plus seulement le panneau du bas.
+- **Relation Q–T°** : échelle log sur le graphique de gauche (nuage brut).
+- **Climatique** : bascule intégrale vers Plotly (interactif, zoom, survol,
+  export) ; axe des années en entiers propres ; seuils d'étiage et de débit
+  estival explicités en clair dans les titres.
+- Boutons de téléchargement PNG systématisés sur toutes les figures.
+
 ## 3.2 — 2026-07-24
 - Anomalie d'air **lissée** (7 j par défaut, réglable) pour la compensation :
   la série normalisée était jusqu'ici ~8× plus bruitée que la brute, car on
