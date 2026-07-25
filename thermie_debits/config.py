@@ -10,19 +10,19 @@ from typing import Optional
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
 # ============================================================
-__version__ = "3.5"
-VERSION_DATE = "2026-07-27"
+__version__ = "3.6"
+VERSION_DATE = "2026-07-28"
 VERSION_NOTES = (
-    "SGVT : jauge et tableau scindés en 2 figures autonomes (fini le "
-    "chevauchement, plus de place pour chacune) ; lignes de section du "
-    "tableau (SENSIBILITÉ, VULNÉRABILITÉ...) fusionnées visuellement sur "
-    "toute la largeur. Fraie-croissance et Vulnérabilité (juin-sept) : les "
-    "années sont superposées sur un même axe avec une couleur par année "
-    "(palette commune aux deux figures) plutôt que juxtaposées en petits "
-    "multiples — gère les fenêtres à cheval sur le nouvel an (truite) via "
-    "un calendrier saisonnier synthétique. Climatique : graphique bonus "
-    "revu (précipitations en X, jours de canicule aquatique en Y, taille "
-    "des bulles = jours d'étiage), limité aux années à couverture complète."
+    "Correctif tableau de synthèse : les lignes de titre de section "
+    "produisaient un remplissage triangulaire défectueux (bug de "
+    "matplotlib avec visible_edges) — remplacé par une bordure peinte de "
+    "la même couleur, fusion visuelle propre et vérifiée. Chronique "
+    "thermique : légende déplacée sous le graphique. Fraie-croissance : "
+    "figure aérée (hauteur, espacement titre/phases/légende) et filtrage "
+    "par période désormais opérant (comme pour Vulnérabilité). Relation "
+    "Q–T° : étiquettes mineures de l'axe log masquées (fini le "
+    "chevauchement '2×10⁰'). Climatique : diagnostic explicite quand le "
+    "graphique bonus ne peut pas être produit (conditions non réunies)."
 )
 
 

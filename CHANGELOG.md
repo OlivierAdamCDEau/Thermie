@@ -1,5 +1,26 @@
 # Journal des versions
 
+## 3.6 — 2026-07-28
+- **Correctif tableau de synthèse** : les lignes de titre de section
+  (SENSIBILITÉ, VULNÉRABILITÉ...) produisaient un remplissage triangulaire
+  défectueux — bug de rendu de `Cell.visible_edges` sous cette version de
+  matplotlib, vérifié par scan pixel (la couleur se réduisait
+  progressivement du haut vers le bas de la ligne). Remplacé par une
+  bordure peinte de la même couleur que le fond ; fusion visuelle propre
+  vérifiée sur les 4 lignes de section (fond et bordure uniformes).
+- **Chronique thermique** : légende déplacée sous le graphique.
+- **Fraie-croissance** : figure aérée (hauteur +11 %, plus d'espace entre
+  le sous-titre gris et les intitulés de phase, plus d'espace entre l'axe
+  des dates et la légende). Le filtrage par période s'applique désormais
+  correctement (il ne l'était pas — la figure utilisait encore la version
+  figée du dernier calcul, comme corrigé précédemment pour Vulnérabilité).
+- **Relation Q–T°** : étiquettes mineures de l'axe log masquées
+  (NullFormatter) — supprime le chevauchement des libellés type « 2×10⁰ ».
+- **Climatique** : diagnostic explicite (console + app) quand le graphique
+  bonus précipitations × canicule ne peut pas être produit, précisant
+  laquelle des conditions (précipitations, débit, couverture ≥ 350 j/an,
+  4 années minimum) n'est pas réunie.
+
 ## 3.5 — 2026-07-27
 - **SGVT** : la jauge et le tableau de synthèse sont désormais deux figures
   autonomes (`fig_synthese_tableau` / `fig_synthese_jauge`) — la jauge

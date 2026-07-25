@@ -69,7 +69,8 @@ def fig_chronique(df, nom, output_dir, periode=None):
     ax.set_xlabel("Date", fontsize=11); ax.set_ylabel("Température (°C)", fontsize=11)
     ax.set_title(f"{nom} — Chronique thermique\nNormales 1991–2020, T air et Tmh",
                  fontsize=13, fontweight="bold", pad=15)
-    leg = ax.legend(fontsize=9, loc="upper right", ncol=2)
+    leg = ax.legend(fontsize=8.5, loc="upper center", bbox_to_anchor=(0.5, -0.24),
+                    ncol=3, frameon=True)
     style_legend(leg)
     ax.grid(True, alpha=0.3)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
@@ -303,7 +304,7 @@ def _synth_date(date, mois_debut):
         return pd.Timestamp(year=yr, month=date.month, day=28)
 
 
-def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
+def fig_fraie_croissance(fraie_res, contexte, nom, output_dir, periode=None):
     """
     Vulnérabilité fraie-croissance, par espèce repère et par PHASE.
     Quand plusieurs années sont disponibles, chaque campagne (occurrence
@@ -311,7 +312,9 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
     une couleur par année — plutôt que juxtaposée en petits multiples : les
     campagnes restent directement comparables sans multiplier les panneaux
     (et sans risque de chevauchement de titres lorsque les années sont
-    nombreuses).
+    nombreuses). `periode`, si fourni, filtre les CAMPAGNES affichées par
+    année (l'axe n'étant plus une chronologie réelle mais un calendrier
+    saisonnier commun à toutes les campagnes).
     """
     if not fraie_res:
         return None
@@ -322,7 +325,7 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
     from .core import segments_valides
 
     n = len(sous)
-    fig, axes = plt.subplots(n, 1, figsize=(9.5, 5.3 * n), squeeze=False)
+    fig, axes = plt.subplots(n, 1, figsize=(9.5, 5.9 * n), squeeze=False)
     fig.patch.set_facecolor("white")
 
     for i, s in enumerate(sous):
@@ -343,6 +346,12 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
                 campagnes.append(camp)
         if not campagnes:
             campagnes = [sub]
+        if periode:
+            y0, y1 = periode[0].year, periode[1].year
+            filtrees = [c for c in campagnes
+                       if y0 <= int(c["date_dt"].min().year) <= y1 or
+                          y0 <= int(c["date_dt"].max().year) <= y1]
+            campagnes = filtrees or campagnes
         multi = len(campagnes) > 1
 
         # Bandes de phase — tracées une seule fois sur le calendrier
@@ -399,7 +408,7 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
             if len(mois_syn):
                 x_mid = mois_syn[len(mois_syn) // 2]
                 lab_p = NOMS_PHASE.get(ph["cle"], ph["cle"])
-                ax.annotate(lab_p, xy=(x_mid, 1.05), xycoords=trans,
+                ax.annotate(lab_p, xy=(x_mid, 1.04), xycoords=trans,
                             fontsize=9.5, ha="center", va="bottom",
                             fontweight="bold", color="#34495E",
                             annotation_clip=False,
@@ -413,8 +422,8 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
                  f"{'   ★ retenu' if limitant else ''}"
                  f"{f'  —  {len(campagnes)} campagnes superposées' if multi else ''}")
         ax.set_title(titre, fontsize=10.5, fontweight="bold",
-                     color="#1A5276" if limitant else "#555555", pad=32)
-        ax.set_xlabel("Date (calendrier saisonnier)", fontsize=9.5)
+                     color="#1A5276" if limitant else "#555555", pad=44)
+        ax.set_xlabel("Date (calendrier saisonnier)", fontsize=9.5, labelpad=10)
         ax.set_ylabel("T° eau normalisée (°C)", fontsize=9.5)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
         ax.tick_params(axis="x", labelsize=8, labelrotation=30)
@@ -422,7 +431,7 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
         ax.grid(True, alpha=0.3)
         ncol_leg = min(len(campagnes), 6) if multi else 2
         titre_leg = "Campagne" if multi else None
-        leg = ax.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.20),
+        leg = ax.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.32),
                         ncol=ncol_leg, frameon=True, title=titre_leg, title_fontsize=8.5)
         style_legend(leg)
 
@@ -430,7 +439,7 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
                 f"Sévérité moyenne (/3) : {s['sev_moy']:.2f}  ·  "
                 f"Froid {'bloquant (échec)' if s.get('froid_bloquant') else 'ralentissant'}  ·  "
                 f"[info] % brut hors optimum : {s.get('pct_brut', float('nan')):.0f}%")
-        ax.text(0.5, 1.12, info, transform=ax.transAxes, fontsize=7.8, ha="center",
+        ax.text(0.5, 1.22, info, transform=ax.transAxes, fontsize=7.8, ha="center",
                va="bottom", color="#7F8C8D")
 
     plt.suptitle(f"{nom} — Vulnérabilité fraie-croissance par phase\n"
@@ -535,12 +544,13 @@ def fig_synthese_tableau(sens_res, vul_res, sgvt_res, contexte, nom, output_dir)
         if bold: props["fontweight"] = "bold"
         if props: cell.set_text_props(**props)
         if is_section:
-            # Fusion visuelle : masque les bordures internes entre les 5
-            # cellules de la ligne (même couleur de fond déjà appliquée) et
-            # aligne le texte à gauche sur toute la largeur.
-            cell.visible_edges = "TB" if col > 0 else "TBL"
-            if col == 4:
-                cell.visible_edges += "R"
+            # Fusion visuelle : peint les bordures internes de la même
+            # couleur que le fond, plutôt que de les masquer via
+            # visible_edges — qui produit un rendu triangulaire défectueux
+            # sur cette version de matplotlib (vérifié : la zone colorée se
+            # réduit progressivement du haut vers le bas de la ligne).
+            cell.set_edgecolor(fill)
+            cell.set_linewidth(1.2)
     ax_t.set_title(f"Tableau de synthèse — {ctx}", fontsize=13, fontweight="bold", pad=15)
     plt.tight_layout()
     return _finalise(fig, output_dir, "Fig3a_Synthese_Tableau.png")
@@ -918,6 +928,11 @@ def fig_relation_debit_temperature(rel, nom, output_dir):
         ax1.axvline(b, color="#566573", lw=1.2, ls=style, alpha=0.8,
                     label=f"{lab} ({b:.3f})")
     ax1.set_xscale("log")
+    # Masque les étiquettes mineures ("2×10⁰", "3×10⁰"...) qui se chevauchent
+    # sur une plage de moins d'une décennie complète — ne garde que les
+    # puissances de 10 majeures, nettement espacées.
+    from matplotlib.ticker import NullFormatter
+    ax1.xaxis.set_minor_formatter(NullFormatter())
     ax1.set_xlabel("Débit Q (m³/s) — échelle log", fontsize=10)
     ax1.set_ylabel("Température de l'eau (°C)", fontsize=10)
     ax1.set_title("Relation observée (couleur = forçage atmosphérique)",

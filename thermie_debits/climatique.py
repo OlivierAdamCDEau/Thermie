@@ -202,7 +202,14 @@ def volet_climatique(daily_eau, df_air, df, contexte, nom, output_dir,
     # bulles = jours d'étiage. Ne retient que les années à couverture
     # complète (≥ 350 jours de données air) : une année tronquée fausserait
     # le cumul de précipitations et donc la comparaison inter-annuelle. ----
-    if rr_annual is not None and days_lt1 is not None:
+    print("  Graphique bonus (précipitations × canicule) — diagnostic :")
+    if rr_annual is None:
+        print("    ⚠ non produit : pas de colonne précipitations (RR) exploitable "
+              "dans le fichier air, ou aucune année avec un cumul > 0.")
+    elif days_lt1 is None:
+        print("    ⚠ non produit : fichier débit absent, ou colonne Q indisponible "
+              "dans la chronique fusionnée (nécessaire pour les jours d'étiage).")
+    else:
         jours_par_an = dfa.groupby("Year").size()
         annees_completes = set(jours_par_an[jours_par_an >= 350].index)
         s_chr, s_aig = contexte["seuil_chr"], contexte["seuil_aigu"]
@@ -214,7 +221,13 @@ def volet_climatique(daily_eau, df_air, df, contexte, nom, output_dir,
 
         yrs_communes = sorted(set(rr_annual.index) & set(days_lt1.index) &
                               set(jours_canicule.index) & annees_completes)
-        if len(yrs_communes) >= 4:
+        if len(yrs_communes) < 4:
+            print(f"    ⚠ non produit : seulement {len(yrs_communes)} année(s) "
+                  f"réunissant toutes les conditions (précipitations + étiage + "
+                  f"canicule + couverture ≥ 350 j/an) — 4 minimum requises. "
+                  f"Années à couverture complète disponibles : "
+                  f"{sorted(annees_completes) or 'aucune'}.")
+        else:
             x_rr = [rr_annual[y] for y in yrs_communes]
             y_can = [int(jours_canicule.get(y, 0)) for y in yrs_communes]
             n_etiage = [int(days_lt1.get(y, 0)) for y in yrs_communes]

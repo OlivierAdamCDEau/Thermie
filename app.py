@@ -484,8 +484,11 @@ with ong[4]:
                 for e, src in srcs.items():
                     st.markdown(f"**{e.capitalize()}** — {src}")
     if res.figures.get("fraie") is not None:
-        st.pyplot(res.figures["fraie"])
-        _fig_download(res.figures["fraie"], "⬇️ PNG fraie-croissance", "Fraie_Croissance.png")
+        nom_fig = res.config.sources.nom_cours_eau
+        fig_fraie_live = figmod.fig_fraie_croissance(res.fraie, res.contexte, nom_fig,
+                                                     None, periode=periode_affichage)
+        st.pyplot(fig_fraie_live)
+        _fig_download(fig_fraie_live, "⬇️ PNG fraie-croissance", "Fraie_Croissance.png")
     if fr:
         from thermie_debits.exports import construire_fraie_xlsx_bytes
         try:
@@ -714,3 +717,10 @@ if res.figures_climatiques and "🌍 Climatique" in noms:
             titre = f.axes[0].get_title().split("\n")[0]
             _fig_download(f, f"⬇️ PNG — {titre}",
                          f"Climatique_{i+1}_{titre[:30].replace(' ','_')}.png")
+        if not any("sévérité thermique" in f.axes[0].get_title() for f in res.figures_climatiques):
+            st.caption("ℹ️ Le graphique bonus (précipitations × canicule aquatique) "
+                      "n'apparaît pas : il exige au moins 4 années réunissant "
+                      "simultanément une colonne précipitations exploitable, un "
+                      "fichier débit, et une couverture d'au moins 350 jours de "
+                      "données air par année (le détail exact est affiché dans la "
+                      "console en mode CLI verbeux).")
