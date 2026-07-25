@@ -58,9 +58,9 @@ def enforce_min_fontsize(fig, cap=FONT_FLOOR_CAP, target_cm=PORTRAIT_CM):
     return fig
 
 
-def style_legend(leg, alpha=0.90):
-    """Fond semi-opaque + cadre discret, pour qu'une légende ne masque jamais
-    complètement une courbe ou un texte sous-jacent."""
+def style_legend(leg, alpha=0.62):
+    """Fond translucide (les courbes restent visibles à travers) + cadre
+    discret, pour qu'une légende ne masque jamais complètement une courbe."""
     if leg is None:
         return leg
     frame = leg.get_frame()
@@ -120,3 +120,34 @@ def apply_row_heights(tbl, line_counts, has_header=True):
             idx = row - offset
             if 0 <= idx < len(line_counts):
                 cell.set_height(unit_h * line_counts[idx])
+
+
+def make_print_ready(fig, target_cm=PORTRAIT_CM, cap=FONT_FLOOR_CAP):
+    """
+    Produit une COPIE indépendante de la figure (par sérialisation) avec le
+    plancher de lisibilité à l'impression appliqué. L'original — utilisé
+    pour l'affichage à l'écran — n'est pas modifié : ses proportions restent
+    celles voulues par l'auteur de la figure, pensées pour un rendu d'écran
+    plutôt que pour un collage à pleine largeur dans un document.
+
+    Les tableaux matplotlib de ce module pré-calculent leur retour à la ligne
+    en anticipant CETTE police agrandie (voir wrap_rows / table_fontsize) :
+    le texte tient donc exactement une fois la police effectivement relevée
+    ici, sans repasser par un nouveau calcul de découpe.
+    """
+    import pickle
+    copie = pickle.loads(pickle.dumps(fig))
+    enforce_min_fontsize(copie, cap=cap, target_cm=target_cm)
+    return copie
+
+
+def col_width_chars(width_frac, fig_width_in, fontsize_pt, avg_char_ratio=0.56):
+    """
+    Nombre de caractères qui tiennent dans une colonne de tableau, à partir
+    de sa largeur en fraction de l'axe et de la largeur réelle de la figure.
+    `avg_char_ratio` est une estimation prudente de la largeur moyenne d'un
+    caractère (police sans-serif, majuscules et gras inclus) — mieux vaut
+    replier une ligne de trop que la voir déborder silencieusement.
+    """
+    width_pt = width_frac * fig_width_in * 72
+    return max(6, int(width_pt / (fontsize_pt * avg_char_ratio)))

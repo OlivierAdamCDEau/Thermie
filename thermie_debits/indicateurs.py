@@ -132,14 +132,27 @@ def calcul_indicateurs(df, sub, verbose=False):
     table = pd.DataFrame(lignes)
 
     # -------- Corrélations (4 graphiques) --------
-    def _correl(x, y, xlabel, ylabel):
+    def _correl(x, y, xlabel, ylabel, log_x=False):
+        """
+        log_x=True : régresse sur log(x) plutôt que x brut — retenu pour les
+        deux corrélations à débit en abscisse. Justification : le tampon
+        thermique (amplitude nycthémérale, écart eau-air) croît avec le
+        volume/profondeur à rendements décroissants, une relation en loi de
+        puissance qui s'écrit linéairement en log(Q) ; cela rejoint aussi la
+        convention déjà adoptée ailleurs dans la méthode (PNDA, corrélation
+        partielle Q↔T°, débits classés — tous traités en échelle log).
+        """
         m_ = pd.DataFrame({"x": x, "y": y}).dropna()
+        if log_x:
+            m_ = m_[m_["x"] > 0]
         if len(m_) < 5:
             return dict(x=[], y=[], r2=np.nan, pente=np.nan, ordonnee=np.nan,
-                        n=len(m_), xlabel=xlabel, ylabel=ylabel)
-        sl, ic, r, p, _ = stats.linregress(m_["x"], m_["y"])
+                        n=len(m_), xlabel=xlabel, ylabel=ylabel, log_x=log_x)
+        xv = np.log(m_["x"].values) if log_x else m_["x"].values
+        sl, ic, r, p, _ = stats.linregress(xv, m_["y"])
         return dict(x=m_["x"].values, y=m_["y"].values, r2=r**2, pente=sl,
-                    ordonnee=ic, n=len(m_), xlabel=xlabel, ylabel=ylabel)
+                    ordonnee=ic, n=len(m_), xlabel=xlabel, ylabel=ylabel,
+                    log_x=log_x)
 
     correlations = {}
     has_q = "Q" in d.columns and d["Q"].notna().any()
@@ -149,13 +162,15 @@ def calcul_indicateurs(df, sub, verbose=False):
 
     if has_q:
         correlations["ampl_vs_debit"] = _correl(
-            d["Q"], d["ampl"], "Débit (m³/s)", "Amplitude nycthémérale (°C)")
+            d["Q"], d["ampl"], "Débit (m³/s)", "Amplitude nycthémérale (°C)",
+            log_x=True)
     correlations["ampl_vs_teau"] = _correl(
         d["T_eau_moy"], d["ampl"], "T° eau (°C)", "Amplitude nycthémérale (°C)")
     if has_air:
         if has_q:
             correlations["ecart_vs_debit"] = _correl(
-                d["Q"], d["ecart_eau_air"], "Débit (m³/s)", "Écart T°eau − T°air (°C)")
+                d["Q"], d["ecart_eau_air"], "Débit (m³/s)", "Écart T°eau − T°air (°C)",
+                log_x=True)
         correlations["ecart_vs_teau"] = _correl(
             d["T_eau_moy"], d["ecart_eau_air"], "T° eau (°C)", "Écart T°eau − T°air (°C)")
 

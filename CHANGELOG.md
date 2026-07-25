@@ -1,5 +1,38 @@
 # Journal des versions
 
+## 3.4 — 2026-07-26
+- **Correctif majeur — polices trop grandes à l'écran** : le plancher de
+  lisibilité à l'impression (8 pt à 16/24,7 cm) s'appliquait par erreur
+  directement à l'affichage, gonflant des textes calibrés pour l'écran
+  (ex. jauge SGVT) sans réajuster leur espacement, provoquant des
+  chevauchements. Architecture corrigée : l'écran conserve les proportions
+  d'origine ; seule la copie téléchargée (`print_style.make_print_ready`)
+  applique le plancher, sur une figure dupliquée indépendamment.
+- **Correctif — débordement de tableau** : le calcul du budget de caractères
+  se basait sur la largeur totale de la figure plutôt que sur la largeur
+  réelle de l'axe contenant le tableau (qui n'en occupe qu'une fraction à
+  cause du panneau voisin) — corrigé et vérifié sans débordement résiduel.
+- **Légendes réellement translucides** : opacité ramenée de 0,90 à 0,62.
+- **Période d'affichage** : format JJ/MM/AAAA ; correctif de réactivité — les
+  trois figures chroniques (Synthèse, QC, Vulnérabilité) se régénèrent
+  maintenant à la volée à chaque changement, sans relancer l'analyse.
+- **Fraie-croissance** : quand plusieurs années sont disponibles, chaque
+  campagne annuelle (ex. automne-hiver pour la truite) est présentée dans
+  son propre panneau plutôt que sur un seul axe continu — échelle de
+  température partagée par espèce pour une comparaison directe. Repli
+  automatique sur l'ancien rendu à une colonne si une seule campagne.
+- **Indicateurs** : les corrélations à débit en abscisse sont désormais
+  régressées sur log(Q) plutôt que Q brut — cohérent avec le reste de la
+  méthode (PNDA, corrélation partielle Q↔T°, débits classés, tous en
+  échelle log) et avec la nature en rendements décroissants du tampon
+  thermique. Validé sur cas contrôlé avant application (R² 0,37→0,86 quand
+  la relation est réellement logarithmique).
+- **Climatique** : retour à matplotlib (l'essai Plotly n'apportait pas de
+  valeur ajoutée jugée suffisante) ; axe des années forcé en entiers
+  (corrige définitivement les tickmarks décimaux) ; seuils d'étiage et de
+  débit estival toujours explicités en clair. Ajout d'un graphique bonus
+  (précipitations annuelles vs sévérité de l'étiage).
+
 ## 3.3 — 2026-07-25
 - **Impression/Word** : toutes les figures garantissent désormais une police
   ≥ 8 pt une fois collées à 16 cm (portrait) ou 24,7 cm (paysage) — plancher

@@ -10,18 +10,16 @@ from typing import Optional
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
 # ============================================================
-__version__ = "3.3"
-VERSION_DATE = "2026-07-25"
+__version__ = "3.4"
+VERSION_DATE = "2026-07-26"
 VERSION_NOTES = (
-    "Mise en forme pour restitution Word : polices garanties lisibles à "
-    "l'impression (portrait 16 cm / paysage 24,7 cm), tableaux à retour à la "
-    "ligne, légendes semi-transparentes repositionnées · jauge SGVT élargie "
-    "et moins haute · coupure des lacunes généralisée + fenêtre d'affichage "
-    "optionnelle · figure fraie-croissance et export XLSX dédié · nouvelle "
-    "figure de synthèse des indicateurs mensuels (+ échelle log) · échelle "
-    "log sur les graphiques débit (indicateurs, relation Q–T°) · libellés "
-    "d'axe sur les deux panneaux de vulnérabilité · onglet Climatique "
-    "converti en Plotly (interactif, axes d'années propres, seuils explicités)"
+    "Correctifs suite retours utilisateur : polices écran redevenues modestes "
+    "(le plancher d'impression ne s'applique plus qu'au téléchargement), "
+    "légendes réellement translucides, période d'affichage réactive en "
+    "temps réel (format JJ/MM/AAAA), fraie-croissance en petits multiples "
+    "par campagne annuelle quand plusieurs années sont disponibles, "
+    "corrélations débit (indicateurs) régressées sur log(Q), volet "
+    "climatique revenu en matplotlib (+ 1 graphique bonus précip./étiage)"
 )
 
 

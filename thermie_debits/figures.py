@@ -22,11 +22,15 @@ from .print_style import enforce_min_fontsize, style_legend
 
 
 def _finalise(fig, output_dir, filename):
-    """Applique le plancher de lisibilité à l'impression, sauvegarde
-    optionnelle (mode CLI), puis retourne la figure (mode app)."""
-    enforce_min_fontsize(fig)
+    """Retourne la figure telle qu'autrice (proportions d'écran inchangées).
+    Le plancher de lisibilité à l'impression n'est plus appliqué ici — il est
+    calculé à la demande, uniquement sur la copie téléchargée ou exportée en
+    CLI (voir print_style.make_print_ready), pour ne pas gonfler l'affichage
+    à l'écran alors que l'utilisateur n'imprime pas forcément la figure."""
     if output_dir:
-        fig.savefig(f"{output_dir}{filename}", dpi=150, bbox_inches="tight")
+        from .print_style import make_print_ready
+        fig_print = make_print_ready(fig)
+        fig_print.savefig(f"{output_dir}{filename}", dpi=150, bbox_inches="tight")
         print(f"✅ {filename}")
     return fig
 
@@ -83,7 +87,7 @@ def fig_chronique(df, nom, output_dir, periode=None):
 
 
 def fig_sensibilite(res, nom, output_dir):
-    from .print_style import wrap_rows, apply_row_heights, table_fontsize
+    from .print_style import wrap_rows, apply_row_heights, table_fontsize, col_width_chars
     df_ete = res["df_ete"]
     x, y = df_ete["T_air"].values, df_ete["T_eau_moy"].values
     slope, intercept, r2 = res["m"], res["intercept"], res["r2"]
@@ -138,13 +142,19 @@ def fig_sensibilite(res, nom, output_dir):
         ["Catégorie de sensibilité", res["sens_cat"]],
     ]
     section_rows = {5, 9, 12, 15}
-    fs = table_fontsize(FIG_W)
-    # Budget de caractères par colonne, calé sur la taille de police retenue
-    # (évite qu'une valeur longue soit tronquée silencieusement par mpl).
-    wrapped, counts = wrap_rows(rows, col_chars=[24, 26])
+    FS_ECRAN = 10.0                     # police confortable à l'écran
+    # ax2 n'occupe que la moitié de la figure (1x2, panneaux égaux) — le
+    # budget de caractères doit se baser sur cette largeur réelle, pas sur
+    # FIG_W entier (cause du débordement précédemment observé).
+    AX2_FRAC = 0.5 * 0.92                # 0.92 = marge de sécurité (tight_layout)
+    ax2_width_in = FIG_W * AX2_FRAC
+    fs_impr = table_fontsize(FIG_W)      # police anticipée pour l'impression
+    col_chars = [col_width_chars(0.5, ax2_width_in, fs_impr),
+                col_width_chars(0.5, ax2_width_in, fs_impr)]
+    wrapped, counts = wrap_rows(rows, col_chars=col_chars)
     tbl = ax2.table(cellText=wrapped, colLabels=["Paramètre", "Valeur"],
                     cellLoc="left", loc="center", bbox=[0, 0, 1, 1])
-    tbl.auto_set_font_size(False); tbl.set_fontsize(fs)
+    tbl.auto_set_font_size(False); tbl.set_fontsize(FS_ECRAN)
     apply_row_heights(tbl, counts)
     for (row, col), cell in tbl.get_celld().items():
         cell.set_edgecolor("#bdc3c7")
@@ -229,12 +239,84 @@ def fig_vulnerabilite(vul, contexte, nom, output_dir, periode=None):
 # ============================================================
 
 
+NOMS_PHASE = {"prefrai": "Pré-frai", "ponte": "Ponte", "incubation": "Incubation"}
+
+
+def _dessiner_campagne_fraie(ax, camp, phases, ylim, montrer_ylabel=True,
+                             montrer_legende=False, titre_campagne=None):
+    """Dessine une campagne (segment continu d'une saison de reproduction)
+    sur un axe : bandes de phase, courbe normalisée, repères au-dessus du
+    cadre. Utilisée aussi bien pour le cas mono-année que pour chaque
+    colonne de la grille multi-campagnes."""
+    ax.set_facecolor("#f8f9fa")
+    dates = camp["date_dt"].values
+    mois = pd.to_datetime(camp["date_dt"]).dt.month.values
+
+    deja_leg = set()
+    for ph in phases:
+        if not ph.get("n"):
+            continue
+        msk = np.isin(mois, ph["mois"])
+        if not msk.any():
+            continue
+        o0, o1 = ph["opt"]; e0, e1 = ph["elargie"]
+        lab_o = "Optimum de la phase" if "o" not in deja_leg else None
+        lab_e = "Tolérance élargie (non létale)" if "e" not in deja_leg else None
+        lab_l = "Seuil létal / échec reproducteur" if "l" not in deja_leg else None
+        deja_leg |= {"o", "e", "l"}
+        ax.fill_between(dates, o0, o1, where=msk, color="#27ae60",
+                        alpha=0.20, zorder=0, label=lab_o, step="mid")
+        ax.fill_between(dates, o1, e1, where=msk, color="#F4D03F",
+                        alpha=0.22, zorder=0, label=lab_e, step="mid")
+        ax.fill_between(dates, e0, o0, where=msk, color="#F4D03F",
+                        alpha=0.22, zorder=0, step="mid")
+        ax.plot(dates, np.where(msk, e1, np.nan), color="#c0392b",
+                lw=1.6, ls="--", zorder=2, label=lab_l)
+        ax.plot(dates, np.where(msk, e0, np.nan), color="#c0392b",
+                lw=1.2, ls=":", zorder=2)
+
+    ax.plot(dates, camp["Tmh_norm_fraie"], color="#1A5276", lw=1.8, zorder=3,
+            label="T° eau normalisée")
+    ax.set_ylim(*ylim)
+
+    trans = ax.get_xaxis_transform()
+    for ph in phases:
+        if not ph.get("n"):
+            continue
+        msk = np.isin(mois, ph["mois"])
+        if msk.any():
+            idx = np.where(msk)[0]
+            x_mid = dates[idx[len(idx) // 2]]
+            lab = NOMS_PHASE.get(ph["cle"], ph["cle"])
+            ax.annotate(lab, xy=(x_mid, 1.05), xycoords=trans,
+                        fontsize=9, ha="center", va="bottom",
+                        fontweight="bold", color="#34495E",
+                        annotation_clip=False,
+                        bbox=dict(boxstyle="round,pad=0.2", facecolor="#EAECEE",
+                                  edgecolor="#AEB6BF", alpha=0.95))
+    if titre_campagne:
+        ax.set_title(titre_campagne, fontsize=9.5, color="#566573", pad=22)
+    ax.set_xlabel("Date", fontsize=9.5)
+    if montrer_ylabel:
+        ax.set_ylabel("T° eau normalisée (°C)", fontsize=9.5)
+    ax.grid(True, alpha=0.3)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+    ax.tick_params(axis="x", labelsize=8, labelrotation=30)
+    ax.tick_params(axis="y", labelsize=8.5)
+    if montrer_legende:
+        leg = ax.legend(fontsize=8, loc="upper center",
+                        bbox_to_anchor=(0.5, -0.22), ncol=2, frameon=True)
+        style_legend(leg)
+
+
 def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
     """
     Vulnérabilité fraie-croissance, par espèce repère et par PHASE.
-    Les bandes colorées (optimum en vert, tolérance élargie en jaune) se
-    déplacent au fil de la saison : chaque phase — pré-frai, ponte,
-    incubation — a sa propre fenêtre thermique.
+    Lorsque la chronique couvre plusieurs années, chaque occurrence annuelle
+    de la fenêtre de reproduction (« campagne » — ex. automne-hiver pour la
+    truite) est présentée dans son propre panneau plutôt que sur un seul axe
+    continu : les campagnes deviennent directement comparables entre elles,
+    sur une échelle de température partagée par espèce.
     """
     if not fraie_res:
         return None
@@ -242,105 +324,81 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir):
     if not sous:
         return None
 
-    NOMS_PHASE = {"prefrai": "Pré-frai", "ponte": "Ponte", "incubation": "Incubation"}
-    n = len(sous)
-    fig, axes = plt.subplots(n, 1, figsize=(10.5, 5.0 * n), squeeze=False)
+    from .core import segments_valides
+
+    especes = []
+    for s in sous:
+        sub = s["sub"].sort_values("date_dt").reset_index(drop=True)
+        segs = segments_valides(sub["date_dt"], sub["Tmh_norm_fraie"], seuil_pas=3)
+        campagnes = []
+        for dates_seg, _ in segs:
+            if len(dates_seg) == 0:
+                continue
+            d0, d1 = pd.Timestamp(dates_seg.min()), pd.Timestamp(dates_seg.max())
+            camp = sub[(sub["date_dt"] >= d0) & (sub["date_dt"] <= d1)]
+            if len(camp) >= 2:
+                campagnes.append(camp)
+        if not campagnes:
+            campagnes = [sub]
+        especes.append((s, campagnes))
+
+    n_rows = len(especes)
+    n_cols = max(len(c) for _, c in especes)
+    largeur = min(3.9 * n_cols + 1.3, 12.5)
+    fig = plt.figure(figsize=(largeur, 4.6 * n_rows))
     fig.patch.set_facecolor("white")
+    gs = fig.add_gridspec(n_rows, n_cols, hspace=0.85, wspace=0.32)
 
-    for i, s in enumerate(sous):
-        ax = axes[i][0]
-        ax.set_facecolor("#f8f9fa")
-        sub = s["sub"].sort_values("date_dt")
-        from .core import inserer_lacunes
-        sub = inserer_lacunes(sub, col_date="date_dt",
-                              cols_valeurs=["Tmh_norm_fraie"], seuil_pas=3)
-        dates = sub["date_dt"].values
-        mois = pd.to_datetime(sub["date_dt"]).dt.month.values
+    for i, (s, campagnes) in enumerate(especes):
+        multi = len(campagnes) > 1
+        all_vals = pd.concat([c["Tmh_norm_fraie"] for c in campagnes])
+        vmin, vmax = float(all_vals.min()), float(all_vals.max())
+        pad = (vmax - vmin) * 0.15 if vmax > vmin else 1.0
+        ylim = (vmin - pad, vmax + pad)
 
-        # Bandes thermiques par phase (elles se déplacent dans le temps)
-        deja_leg = set()
-        for ph in s["phases"]:
-            if not ph.get("n"):
+        for j in range(n_cols):
+            if j >= len(campagnes):
+                fig.add_subplot(gs[i, j]).axis("off")
                 continue
-            msk = np.isin(mois, ph["mois"])
-            if not msk.any():
-                continue
-            o0, o1 = ph["opt"]; e0, e1 = ph["elargie"]
-            lab_o = "Optimum de la phase" if "o" not in deja_leg else None
-            lab_e = "Tolérance élargie (non létale)" if "e" not in deja_leg else None
-            lab_l = "Seuil létal / échec reproducteur" if "l" not in deja_leg else None
-            deja_leg |= {"o", "e", "l"}
-            ax.fill_between(dates, o0, o1, where=msk, color="#27ae60",
-                            alpha=0.20, zorder=0, label=lab_o, step="mid")
-            ax.fill_between(dates, o1, e1, where=msk, color="#F4D03F",
-                            alpha=0.22, zorder=0, label=lab_e, step="mid")
-            ax.fill_between(dates, e0, o0, where=msk, color="#F4D03F",
-                            alpha=0.22, zorder=0, step="mid")
-            ax.plot(dates, np.where(msk, e1, np.nan), color="#c0392b",
-                    lw=1.6, ls="--", zorder=2, label=lab_l)
-            ax.plot(dates, np.where(msk, e0, np.nan), color="#c0392b",
-                    lw=1.2, ls=":", zorder=2)
-
-        ax.plot(dates, sub["Tmh_norm_fraie"], color="#1A5276", lw=1.8,
-                zorder=3, label="T° eau normalisée")
-
-        # Repères de phase AU-DESSUS du cadre (coordonnées mixtes : date en
-        # données, hauteur en fraction d'axes) — ne peuvent donc jamais
-        # chevaucher ni la courbe, ni la légende, ni un autre texte du graphe.
-        trans = ax.get_xaxis_transform()  # x en données, y en fraction d'axes
-        for ph in s["phases"]:
-            if not ph.get("n"):
-                continue
-            msk = np.isin(mois, ph["mois"])
-            if msk.any():
-                idx = np.where(msk)[0]
-                x_mid = dates[idx[len(idx) // 2]]
-                lab = NOMS_PHASE.get(ph["cle"], ph["cle"])
-                ax.annotate(lab, xy=(x_mid, 1.06), xycoords=trans,
-                            fontsize=10, ha="center", va="bottom",
-                            fontweight="bold", color="#34495E",
-                            annotation_clip=False,
-                            bbox=dict(boxstyle="round,pad=0.25", facecolor="#EAECEE",
-                                      edgecolor="#AEB6BF", alpha=0.95))
+            ax = fig.add_subplot(gs[i, j])
+            camp = campagnes[j]
+            titre_camp = None
+            if multi:
+                d0, d1 = camp["date_dt"].min(), camp["date_dt"].max()
+                titre_camp = f"Campagne {d0.strftime('%b %Y')} – {d1.strftime('%b %Y')}"
+            _dessiner_campagne_fraie(ax, camp, s["phases"], ylim,
+                                     montrer_ylabel=(j == 0),
+                                     montrer_legende=(j == 0),
+                                     titre_campagne=titre_camp)
 
         limitant = (s["espece"] == fraie_res.get("espece_limitante"))
-        titre = (f"{s['espece'].capitalize()}  |  optimum {s['pct_optimum']:.0f}% · "
-                 f"élargie {s['pct_elargie']:.0f}% · létal {s['pct_letal']:.0f}% "
-                 f"→ P={s['P']} ({s['cat']})"
-                 f"{'   ★ retenu' if limitant else ''}")
-        ax.set_title(titre, fontsize=11, fontweight="bold",
-                     color="#1A5276" if limitant else "#555555", pad=36)
-        ax.set_xlabel("Date", fontsize=10.5)
-        ax.set_ylabel("T° eau normalisée (°C)", fontsize=10.5)
-        # Légende sous le graphe (jamais sur les courbes ni sur les repères
-        # de phase, qui restent au-dessus du cadre).
-        leg = ax.legend(fontsize=8.5, loc="upper center",
-                        bbox_to_anchor=(0.5, -0.16), ncol=2, frameon=True)
-        style_legend(leg)
-        ax.grid(True, alpha=0.3)
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %y"))
+        titre_espece = (f"{s['espece'].capitalize()}  |  optimum {s['pct_optimum']:.0f}% · "
+                        f"élargie {s['pct_elargie']:.0f}% · létal {s['pct_letal']:.0f}% "
+                        f"→ P={s['P']} ({s['cat']})"
+                        f"{'   ★ retenu' if limitant else ''}"
+                        f"{f'  —  {len(campagnes)} campagnes' if multi else ''}")
+        # Titre de ligne positionné au-dessus du premier axe de la ligne,
+        # dans les coordonnées de la figure (indépendant du nombre de
+        # colonnes réellement utilisées par cette espèce).
+        ax0 = fig.axes[i * n_cols]
+        bbox = ax0.get_position()
+        fig.text(0.02, bbox.y1 + 0.028, titre_espece, fontsize=10.5,
+                 fontweight="bold", ha="left", va="bottom",
+                 color="#1A5276" if limitant else "#555555")
 
-        # Encadré d'information — libellés en clair plutôt qu'en notation
-        # interne, positionné en haut à droite (zone la moins disputée par
-        # la courbe, qui part généralement de valeurs basses en début de
-        # fenêtre).
-        info = (f"Coefficient saisonnier air→eau : {s['m_saison']:.2f}\n"
-                f"Sévérité moyenne (/3) : {s['sev_moy']:.2f}\n"
-                f"Pour information, sur T° brutes non compensées :\n"
-                f"  hors optimum {s.get('pct_brut', float('nan')):.0f}% du temps\n"
-                f"Traitement du froid : {'bloquant (échec)' if s.get('froid_bloquant') else 'ralentissant'}")
-        ax.text(0.98, 0.97, info, transform=ax.transAxes, fontsize=8,
-                va="top", ha="right", color="#34495E",
-                bbox=dict(boxstyle="round,pad=0.4", facecolor="#FDFEFE",
-                          edgecolor="#AEB6BF", alpha=0.92))
+        info = (f"Coeff. saisonnier air→eau : {s['m_saison']:.2f}  ·  "
+                f"Sévérité moyenne (/3) : {s['sev_moy']:.2f}  ·  "
+                f"Froid {'bloquant (échec)' if s.get('froid_bloquant') else 'ralentissant'}  ·  "
+                f"[info] % brut hors optimum : {s.get('pct_brut', float('nan')):.0f}%")
+        fig.text(0.02, bbox.y1 + 0.008, info, fontsize=7.8, ha="left",
+                 va="bottom", color="#7F8C8D")
 
     plt.suptitle(f"{nom} — Vulnérabilité fraie-croissance par phase\n"
-                 f"{contexte['label']}", fontsize=13, fontweight="bold", y=1.01)
-    plt.tight_layout()
+                 f"{contexte['label']}", fontsize=13, fontweight="bold", y=1.0)
     return _finalise(fig, output_dir, "Fig3_Fraie_Croissance.png")
 
 def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
-    from .print_style import wrap_rows, apply_row_heights, table_fontsize
+    from .print_style import wrap_rows, apply_row_heights, table_fontsize, col_width_chars
     sg = sgvt_res; sr = sens_res; vr = vul_res; ctx = contexte["label"]
     FIG_W = 11.5
     fig, axes = plt.subplots(1, 2, figsize=(FIG_W, 6.6), gridspec_kw={"width_ratios": [2.1, 1]})
@@ -401,15 +459,24 @@ def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
           f'{sg["sgvt"]:.2f} / 10', sg["interp"], "—", "—"], C["bg_bg"], "#4A235A", True)
 
     rows_data = [r[0] for r in ROWS]
-    fs_tbl = table_fontsize(FIG_W)
-    # Retour à la ligne : colonnes Paramètre/Valeur/Catégorie seulement
-    # (Pts/Poids restent de courtes valeurs qui n'ont jamais besoin de wrap).
-    wrapped, counts = wrap_rows(rows_data, col_chars=[30, 17, 20, None, None])
+    # ax_t n'occupe qu'une partie de la figure (gridspec width_ratios
+    # [2.1, 1], soit ~68 % de FIG_W) — le budget de caractères doit se baser
+    # sur la largeur RÉELLE de cet axe, pas sur la figure entière, sous peine
+    # de sous-estimer le débordement (c'était l'origine du bug signalé).
+    AX_T_FRAC = 2.1 / (2.1 + 1) * 0.92   # 0.92 = marge de sécurité (tight_layout)
+    ax_t_width_in = FIG_W * AX_T_FRAC
+    fs_tbl_print = table_fontsize(FIG_W)  # anticipe la police d'impression
+    FS_ECRAN = 9.5
+    col_chars = [col_width_chars(0.36, ax_t_width_in, fs_tbl_print),
+                col_width_chars(0.22, ax_t_width_in, fs_tbl_print),
+                col_width_chars(0.26, ax_t_width_in, fs_tbl_print),
+                None, None]
+    wrapped, counts = wrap_rows(rows_data, col_chars=col_chars)
     tbl = ax_t.table(cellText=wrapped,
                      colLabels=["Paramètre", "Valeur", "Catégorie", "Pts", "Poids"],
                      colWidths=[0.36, 0.22, 0.26, 0.08, 0.08], cellLoc="left",
                      loc="center", bbox=[0, 0, 1, 1])
-    tbl.auto_set_font_size(False); tbl.set_fontsize(fs_tbl)
+    tbl.auto_set_font_size(False); tbl.set_fontsize(FS_ECRAN)
     apply_row_heights(tbl, counts)
     for (row, col), cell in tbl.get_celld().items():
         cell.set_edgecolor("#bdc3c7")
@@ -446,11 +513,11 @@ def fig_synthese(sens_res, vul_res, sgvt_res, contexte, nom, output_dir):
                   arrowprops=dict(arrowstyle="->", color="black", lw=2.5))
     ax_g.plot(0, 0, "ko", ms=8)
     ax_g.text(0, -0.10, f'SGVT = {sg["sgvt"]:.1f} / 10', ha="center", fontsize=16, fontweight="bold")
-    ax_g.text(0, -0.25, sg["interp"], ha="center", fontsize=11, color=sg["color"], fontweight="bold")
-    ax_g.text(0, -0.38, f'R² = {sg["r2"]:.3f}  ({sg["r2_cat"]})', ha="center", fontsize=9, color="#154360")
-    ax_g.text(0, -0.49, f'Robustesse |ρ−r| = {sg["robustesse"]:.4f}', ha="center", fontsize=9, color="#1e8449")
-    ax_g.text(0, -0.59, sg["rob_cat"], ha="center", fontsize=9, color="#1e8449")
-    ax_g.set_xlim(-1.5, 1.5); ax_g.set_ylim(-0.72, 1.30)
+    ax_g.text(0, -0.29, sg["interp"], ha="center", fontsize=11, color=sg["color"], fontweight="bold")
+    ax_g.text(0, -0.47, f'R² = {sg["r2"]:.3f}  ({sg["r2_cat"]})', ha="center", fontsize=9, color="#154360")
+    ax_g.text(0, -0.65, f'Robustesse |ρ−r| = {sg["robustesse"]:.4f}', ha="center", fontsize=9, color="#1e8449")
+    ax_g.text(0, -0.83, sg["rob_cat"], ha="center", fontsize=9, color="#1e8449")
+    ax_g.set_xlim(-1.5, 1.5); ax_g.set_ylim(-0.98, 1.30)
     ax_g.set_aspect("equal", adjustable="box")
     ax_g.set_title("Score Global de\nVulnérabilité Thermique\n(information d'appoint)",
                    fontsize=12, fontweight="bold", pad=8)
@@ -724,7 +791,7 @@ def fig_correlations_indicateurs(correlations, nom, output_dir):
         ax.set_facecolor("#f8f9fa")
         col = couleurs.get(k, "#333333")
         x, y = np.asarray(c["x"], dtype=float), np.asarray(c["y"], dtype=float)
-        log_x = k in LOG_X_KEYS
+        log_x = c.get("log_x", False)
         if log_x:
             # Échelle log : exclut les débits nuls ou négatifs (rares, mais
             # incompatibles avec un axe logarithmique).
@@ -735,14 +802,20 @@ def fig_correlations_indicateurs(correlations, nom, output_dir):
             xs = np.geomspace(x.min(), x.max(), 100)
         else:
             xs = np.linspace(x.min(), x.max(), 100)
-        ax.plot(xs, c["pente"] * xs + c["ordonnee"], color=col, lw=2, zorder=3)
+        # La régression est calculée sur log(x) pour les deux corrélations à
+        # débit en abscisse (voir indicateurs.py) : la pente s'applique donc
+        # à log(xs), pas à xs brut — sans quoi la droite tracée ne
+        # correspondrait plus au modèle réellement ajusté.
+        xs_reg = np.log(xs) if log_x else xs
+        ax.plot(xs, c["pente"] * xs_reg + c["ordonnee"], color=col, lw=2, zorder=3)
         if log_x:
             ax.set_xscale("log")
             ax.set_xlabel(c["xlabel"] + " — échelle log", fontsize=10)
         else:
             ax.set_xlabel(c["xlabel"], fontsize=10)
         ax.set_ylabel(c["ylabel"], fontsize=10)
-        ax.set_title(f"R² = {c['r2']:.3f}  |  pente = {c['pente']:.3f}  (n={c['n']})",
+        pente_lbl = "pente (/log Q)" if log_x else "pente"
+        ax.set_title(f"R² = {c['r2']:.3f}  |  {pente_lbl} = {c['pente']:.3f}  (n={c['n']})",
                      fontsize=10, fontweight="bold", color=col)
         ax.grid(True, alpha=0.3, which="both" if log_x else "major")
     for j in range(n, nrows * ncols):

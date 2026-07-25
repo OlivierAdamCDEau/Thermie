@@ -16,6 +16,7 @@ from thermie_debits.config import (AnalyseConfig, SourcesConfig, QCConfig,
                                     CONTEXTES, __version__, VERSION_DATE,
                                     VERSION_NOTES)
 from thermie_debits.orchestrator import run
+from thermie_debits import figures as figmod
 
 st.set_page_config(page_title="Thermie & Débits — HMUC Moselle",
                    page_icon="🌡️", layout="wide")
@@ -32,10 +33,14 @@ def _save_upload(uploaded):
 
 
 def _fig_download(fig, label, filename):
+    from thermie_debits.print_style import make_print_ready
+    fig_impr = make_print_ready(fig)
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    fig_impr.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     st.download_button(label, buf.getvalue(), file_name=filename,
-                       mime="image/png", key=filename)
+                       mime="image/png", key=filename,
+                       help="PNG prêt à coller dans Word (police garantie ≥ 8 pt "
+                            "à 16 cm de large en portrait, 24,7 cm en paysage).")
 
 
 # ============================================================
@@ -150,12 +155,13 @@ with st.sidebar.expander("📅 Période affichée (optionnelle)"):
                "chroniques (Synthèse, QC, Vulnérabilité) — les calculs "
                "(SGVT, vulnérabilité, débits) portent toujours sur la "
                "chronique complète.")
-    restreindre_periode = st.checkbox("Fixer une période d'affichage", False)
+    restreindre_periode = st.checkbox("Fixer une période d'affichage", False,
+                                      key="restreindre_periode")
     periode_affichage = None
     if restreindre_periode:
         c1, c2 = st.columns(2)
-        d_deb = c1.date_input("Du", value=None, key="periode_deb")
-        d_fin = c2.date_input("Au", value=None, key="periode_fin")
+        d_deb = c1.date_input("Du", value=None, key="periode_deb", format="DD/MM/YYYY")
+        d_fin = c2.date_input("Au", value=None, key="periode_fin", format="DD/MM/YYYY")
         if d_deb and d_fin and d_deb < d_fin:
             periode_affichage = (pd.Timestamp(d_deb), pd.Timestamp(d_fin))
         elif d_deb and d_fin:
@@ -339,8 +345,13 @@ with ong[0]:
         _fig_download(res.figures["synthese"], "⬇️ PNG synthèse", "Synthese_SGVT.png")
     if res.figures.get("chronique") is not None:
         st.subheader("Chronique thermique")
-        st.pyplot(res.figures["chronique"])
-        _fig_download(res.figures["chronique"], "⬇️ PNG chronique", "Chronique_Thermique.png")
+        # Régénérée à la volée (plutôt que la version figée du dernier
+        # "Lancer l'analyse") pour que la période d'affichage réagisse
+        # immédiatement, sans relancer tout le calcul.
+        nom_fig = res.config.sources.nom_cours_eau
+        fig_chron = figmod.fig_chronique(res.df, nom_fig, None, periode=periode_affichage)
+        st.pyplot(fig_chron)
+        _fig_download(fig_chron, "⬇️ PNG chronique", "Chronique_Thermique.png")
 
 with ong[1]:
     st.subheader("Contrôle qualité — artefacts écartés")
@@ -348,8 +359,11 @@ with ong[1]:
     if rq is not None and len(rq):
         st.write(f"**{len(rq)} enregistrement(s) écarté(s)**")
         if res.figures.get("qc") is not None:
-            st.pyplot(res.figures["qc"])
-            _fig_download(res.figures["qc"], "⬇️ PNG contrôle qualité", "QC_Artefacts.png")
+            nom_fig = res.config.sources.nom_cours_eau
+            fig_qc_live = figmod.fig_qc(res.daily_eau_brut, res.rapport_qc, res.df_air,
+                                        nom_fig, None, periode=periode_affichage)
+            st.pyplot(fig_qc_live)
+            _fig_download(fig_qc_live, "⬇️ PNG contrôle qualité", "QC_Artefacts.png")
         st.dataframe(rq, use_container_width=True, height=260)
         st.download_button("⬇️ Rapport QC (CSV)",
                            rq.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
@@ -373,8 +387,11 @@ with ong[3]:
     c1.metric(f"Stress chronique (>{v['seuil_chr']}°C)", f"{v['pct_chr']:.1f}%", v["cat_chr"])
     c2.metric(f"Létalité aiguë (>{v['seuil_aigu']}°C)", f"{v['n_aigu']} j", v["cat_aigu"])
     if res.figures.get("vulnerabilite") is not None:
-        st.pyplot(res.figures["vulnerabilite"])
-        _fig_download(res.figures["vulnerabilite"], "⬇️ PNG vulnérabilité", "Vulnerabilite.png")
+        nom_fig = res.config.sources.nom_cours_eau
+        fig_vuln_live = figmod.fig_vulnerabilite(res.vulnerabilite, res.contexte, nom_fig,
+                                                 None, periode=periode_affichage)
+        st.pyplot(fig_vuln_live)
+        _fig_download(fig_vuln_live, "⬇️ PNG vulnérabilité", "Vulnerabilite.png")
 
 with ong[4]:
     fr = res.fraie
@@ -683,18 +700,10 @@ if res.config.avec_debits and "💧 Débits" in noms:
 # Climatique
 if res.figures_climatiques and "🌍 Climatique" in noms:
     with ong[noms.index("🌍 Climatique")]:
-        st.caption("Volet descriptif sur données brutes (contexte observé réel). "
-                   "Graphiques interactifs (zoom, survol, export via l'icône "
-                   "appareil photo en haut à droite de chaque graphique).")
+        st.caption("Volet descriptif sur données brutes (contexte observé réel), "
+                   "distinct des volets thermie/débits (contrôle qualité appliqué).")
         for i, f in enumerate(res.figures_climatiques):
-            st.plotly_chart(f, use_container_width=True,
-                            key=f"clim_{i}", config={"displaylogo": False})
-            try:
-                png = f.to_image(format="png", scale=2, width=1000, height=460)
-                titre = (f.layout.title.text or f"climatique_{i}").split("<br>")[0]
-                st.download_button(f"⬇️ PNG — {titre}", png,
-                                   f"Climatique_{i+1}_{titre[:30].replace(' ','_')}.png",
-                                   "image/png", key=f"dl_clim_{i}")
-            except Exception:
-                st.caption("(export PNG indisponible — utilisez l'icône appareil "
-                           "photo du graphique)")
+            st.pyplot(f)
+            titre = f.axes[0].get_title().split("\n")[0]
+            _fig_download(f, f"⬇️ PNG — {titre}",
+                         f"Climatique_{i+1}_{titre[:30].replace(' ','_')}.png")
