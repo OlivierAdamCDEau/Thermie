@@ -1,5 +1,25 @@
 # Journal des versions
 
+## 3.7 — 2026-07-29
+- **Clim1** : remplace l'écart aux normales par la température de l'air
+  annuelle moyenne, dans le même style visuel que les précipitations
+  (barres colorées au-dessus/en-dessous de la moyenne, ligne de moyenne).
+- **Clim2** (renommé "Répartition annuelle des régimes de débit") :
+  remplace le comptage des jours sous 2 seuils par une barre empilée
+  couvrant la totalité de l'année (vérifié : 365-366 jours par barre),
+  répartie en 6 classes de régime — de la crue (> 2× médiane) à l'étiage
+  critique (< 15 % médiane) — sur un dégradé de couleur continu
+  bleu foncé → rouge foncé.
+- **Clim3** (débit moyen estival) : ajout d'une seconde ligne de repère —
+  la médiane estivale — en plus du seuil d'étiage déjà présent.
+- **Clim6** (précipitations × stress thermique) : contraste des tailles de
+  bulles nettement accru (normalisation min-max sur la plage observée,
+  ratio ~12× entre plus petite et plus grande bulle contre ~2× avant) ;
+  axe Y basé sur le stress thermique chronique (seuil du contexte
+  piscicole) plutôt que la létalité aiguë, plus discriminant d'une année
+  sur l'autre ; suppression de la droite de tendance et de la mention
+  « bonus ».
+
 ## 3.6 — 2026-07-28
 - **Correctif tableau de synthèse** : les lignes de titre de section
   (SENSIBILITÉ, VULNÉRABILITÉ...) produisaient un remplissage triangulaire

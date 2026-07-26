@@ -10,19 +10,17 @@ from typing import Optional
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
 # ============================================================
-__version__ = "3.6"
-VERSION_DATE = "2026-07-28"
+__version__ = "3.7"
+VERSION_DATE = "2026-07-29"
 VERSION_NOTES = (
-    "Correctif tableau de synthèse : les lignes de titre de section "
-    "produisaient un remplissage triangulaire défectueux (bug de "
-    "matplotlib avec visible_edges) — remplacé par une bordure peinte de "
-    "la même couleur, fusion visuelle propre et vérifiée. Chronique "
-    "thermique : légende déplacée sous le graphique. Fraie-croissance : "
-    "figure aérée (hauteur, espacement titre/phases/légende) et filtrage "
-    "par période désormais opérant (comme pour Vulnérabilité). Relation "
-    "Q–T° : étiquettes mineures de l'axe log masquées (fini le "
-    "chevauchement '2×10⁰'). Climatique : diagnostic explicite quand le "
-    "graphique bonus ne peut pas être produit (conditions non réunies)."
+    "Volet climatique retravaillé : température de l'air annuelle "
+    "remplace l'écart aux normales (même style que les précipitations) ; "
+    "les jours sous 2 seuils d'étiage sont remplacés par une répartition "
+    "complète de l'année en 6 classes de régime (crue à étiage critique, "
+    "dégradé bleu-rouge) ; le débit moyen estival affiche aussi sa "
+    "médiane ; le graphique précipitations/stress gagne en contraste de "
+    "taille de bulles, bascule sur le stress chronique (plus discriminant "
+    "que la létalité), et perd la tendance linéaire et la mention bonus."
 )
 
 
