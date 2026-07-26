@@ -21,6 +21,32 @@ from .core import _pnda
 from .print_style import enforce_min_fontsize, style_legend
 
 
+def _locator_dates_adaptatif(ax, dates):
+    """
+    Espace les repères de l'axe des dates selon l'étendue réelle de la
+    période affichée — un repère par mois devient illisible au-delà de
+    quelques années (c'était le cas signalé : des dizaines d'étiquettes
+    chevauchées sur une chronique pluriannuelle).
+    """
+    dates = pd.to_datetime(pd.Series(dates)).dropna()
+    if dates.empty:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+        return
+    span = (dates.max() - dates.min()).days
+    if span <= 400:
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    elif span <= 900:
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    elif span <= 2200:
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    else:
+        ax.xaxis.set_major_locator(mdates.YearLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+
+
 def _finalise(fig, output_dir, filename):
     """Retourne la figure telle qu'autrice (proportions d'écran inchangées).
     Le plancher de lisibilité à l'impression n'est plus appliqué ici — il est
@@ -73,8 +99,7 @@ def fig_chronique(df, nom, output_dir, periode=None):
                     ncol=3, frameon=True)
     style_legend(leg)
     ax.grid(True, alpha=0.3)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    _locator_dates_adaptatif(ax, df["date_dt"])
     if periode:
         ax.set_xlim(periode[0], periode[1])
     plt.xticks(rotation=30)
@@ -623,7 +648,7 @@ def fig_qc(daily_brut, rapport, df_air, nom, output_dir, periode=None):
     leg = ax.legend(fontsize=8.5, loc="upper right")
     style_legend(leg)
     ax.grid(True, alpha=0.3)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    _locator_dates_adaptatif(ax, b["date_dt"])
     if periode:
         ax.set_xlim(periode[0], periode[1])
     plt.xticks(rotation=30); plt.tight_layout()
@@ -833,18 +858,25 @@ def fig_debits_classes(cst_res, debit_res, df_q_all, contexte, nom, output_dir, 
 # ============================================================
 
 
-def fig_correlations_indicateurs(correlations, nom, output_dir):
+def fig_correlations_indicateurs(correlations, nom, output_dir, cles=None,
+                                 suffixe_titre=None, filename=None):
     """
-    Figure des 4 corrélations linéaires (amplitude/débit, amplitude/Teau,
-    écart Teau-Tair/débit, écart Teau-Tair/Teau) avec droite de régression
-    et R². Ne trace que les corrélations exploitables (n ≥ 5).
+    Figure des corrélations linéaires entre indicateurs thermiques (amplitude
+    nycthémérale, écart Teau-Tair) et leurs variables explicatives (débit,
+    température de l'eau), avec droite de régression et R². Ne trace que les
+    corrélations exploitables (n ≥ 5).
     Les panneaux à débit en abscisse sont en échelle log (la gamme des
     débits s'étend typiquement sur plusieurs ordres de grandeur).
+
+    `cles`, si fourni, restreint l'affichage à un sous-ensemble des 4
+    corrélations possibles — utilisé pour répartir la figure entre les
+    chapitres du rapport (indicateurs sans débit / avec débit).
     """
     dispo = [(k, c) for k, c in correlations.items() if c.get("n", 0) >= 5]
+    if cles is not None:
+        dispo = [(k, c) for k, c in dispo if k in cles]
     if not dispo:
         return None
-    LOG_X_KEYS = {"ampl_vs_debit", "ecart_vs_debit"}
     n = len(dispo)
     ncols = 2
     nrows = (n + 1) // 2
@@ -886,10 +918,12 @@ def fig_correlations_indicateurs(correlations, nom, output_dir):
         ax.grid(True, alpha=0.3, which="both" if log_x else "major")
     for j in range(n, nrows * ncols):
         axes[j // ncols][j % ncols].axis("off")
-    plt.suptitle(f"{nom} — Corrélations des indicateurs thermiques",
-                 fontsize=13, fontweight="bold", y=1.02)
+    titre = f"{nom} — Corrélations des indicateurs thermiques"
+    if suffixe_titre:
+        titre += f"\n{suffixe_titre}"
+    plt.suptitle(titre, fontsize=13, fontweight="bold", y=1.02)
     plt.tight_layout()
-    return _finalise(fig, output_dir, "Fig_Correlations_Indicateurs.png")
+    return _finalise(fig, output_dir, filename or "Fig_Correlations_Indicateurs.png")
 
 
 def fig_relation_debit_temperature(rel, nom, output_dir):

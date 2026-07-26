@@ -10,17 +10,20 @@ from typing import Optional
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
 # ============================================================
-__version__ = "3.7"
-VERSION_DATE = "2026-07-29"
+__version__ = "4.1"
+VERSION_DATE = "2026-07-31"
 VERSION_NOTES = (
-    "Volet climatique retravaillé : température de l'air annuelle "
-    "remplace l'écart aux normales (même style que les précipitations) ; "
-    "les jours sous 2 seuils d'étiage sont remplacés par une répartition "
-    "complète de l'année en 6 classes de régime (crue à étiage critique, "
-    "dégradé bleu-rouge) ; le débit moyen estival affiche aussi sa "
-    "médiane ; le graphique précipitations/stress gagne en contraste de "
-    "taille de bulles, bascule sur le stress chronique (plus discriminant "
-    "que la létalité), et perd la tendance linéaire et la mention bonus."
+    "Rapport Word rendu générique (retrait des mentions HMUC et des renvois "
+    "à la note méthodologique, pour un usage sur d'autres contextes). Axe "
+    "des dates de la chronique et du QC désormais adaptatif (fini les "
+    "dizaines d'étiquettes chevauchées sur les chroniques pluriannuelles). "
+    "§1.5 : phrase d'intérêt de la normalisation (comparabilité inter-"
+    "stations et inter-années). Corrélations indicateurs scindées : les 2 "
+    "sans débit passent au §2.2, les 2 avec débit restent au §4.3. "
+    "Chapitre de synthèse : nouveau bloc « débit de référence retenu » en "
+    "ouverture (Q_thermie_bio prioritaire, repli explicite sur "
+    "Q_thermie_fonc sinon ; PNDA désinfluencé en premier, influencé en "
+    "second), repris dans la fiche station du classeur Excel."
 )
 
 

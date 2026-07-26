@@ -317,6 +317,7 @@ if res.config.avec_debits:
     noms.append("💧 Débits")
 if res.figures_climatiques:
     noms.append("🌍 Climatique")
+noms.append("📦 Livrables")
 ong = st.tabs(noms)
 
 with ong[0]:
@@ -724,3 +725,75 @@ if res.figures_climatiques and "🌍 Climatique" in noms:
                       "fichier débit, et une couverture d'au moins 350 jours de "
                       "données air par année (le détail exact est affiché dans la "
                       "console en mode CLI verbeux).")
+
+# =====================================================================
+# LIVRABLES — rapport station « prêt à copier » (docx + xlsx)
+# =====================================================================
+with ong[noms.index("📦 Livrables")]:
+    st.subheader("Rapport de station prêt à copier")
+    st.caption("Deux livrables harmonisés reprenant l'ensemble des résultats "
+               "ci-dessus, organisés en chapitres (Word) et en onglets (Excel). "
+               "Les textes d'interprétation sont exactement ceux affichés dans "
+               "l'application — ils proviennent de la même source.")
+
+    _ordre = ["Données mobilisées et qualité (sources, contrôle qualité, "
+              "couverture calendaire, **validité du modèle air–eau**, contexte "
+              "climatique)",
+              "Vulnérabilité thermique estivale (chronique, aiguë, indicateurs "
+              "sans débit)",
+              "Vulnérabilité de la reproduction (trois phases par espèce)",
+              "Relation débit–température, diagnostic de validité de la "
+              "démarche, et débits de référence",
+              "Synthèse : SGVT, conclusion, réserves, et **fiche de synthèse à "
+              "schéma fixe** pour la comparaison inter-sites"]
+    with st.expander("📑 Structure du rapport"):
+        for i, ch in enumerate(_ordre, start=1):
+            st.markdown(f"**{i}.** {ch}")
+        st.caption("Les chapitres sans objet (pas de fraie évaluable, pas de "
+                   "débit fourni) sont omis du rapport ; la fiche de synthèse "
+                   "conserve en revanche toujours les mêmes colonnes, "
+                   "renseignées « non applicable ».")
+
+    c1, c2 = st.columns(2)
+    _nom_fichier = (res.config.sources.nom_cours_eau or "station").replace(" ", "_")[:40]
+
+    with c1:
+        if st.button("📄 Générer le rapport Word", use_container_width=True):
+            with st.spinner("Composition du rapport…"):
+                try:
+                    from thermie_debits.livrables import construire_docx_bytes
+                    st.session_state["_docx"] = construire_docx_bytes(res)
+                except Exception as e:
+                    st.error(f"Échec de génération : {e}")
+        if st.session_state.get("_docx"):
+            st.download_button(
+                "⬇️ Rapport (.docx)", st.session_state["_docx"],
+                f"Rapport_Thermie_{_nom_fichier}.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True)
+
+    with c2:
+        if st.button("📊 Générer le classeur Excel", use_container_width=True):
+            with st.spinner("Composition du classeur…"):
+                try:
+                    from thermie_debits.livrables import construire_xlsx_bytes
+                    st.session_state["_xlsx"] = construire_xlsx_bytes(res)
+                except Exception as e:
+                    st.error(f"Échec de génération : {e}")
+        if st.session_state.get("_xlsx"):
+            st.download_button(
+                "⬇️ Classeur (.xlsx)", st.session_state["_xlsx"],
+                f"Donnees_Thermie_{_nom_fichier}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True)
+
+    st.divider()
+    st.markdown("**Fiche de synthèse de cette station**")
+    st.caption("Schéma strictement identique pour toutes les stations : les "
+               "lignes de plusieurs sites peuvent être empilées telles quelles "
+               "dans un même tableau de comparaison.")
+    from thermie_debits import redaction as _red
+    _ligne = _red.ligne_synthese(res)
+    st.dataframe({"Indicateur": list(_ligne.keys()),
+                  "Valeur": [str(v) for v in _ligne.values()]},
+                 use_container_width=True, height=400)

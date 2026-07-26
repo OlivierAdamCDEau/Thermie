@@ -2,6 +2,7 @@
 from pathlib import Path
 from thermie_debits.config import AnalyseConfig, SourcesConfig, QCConfig
 from thermie_debits.orchestrator import run
+from thermie_debits.livrables import construire_docx_bytes, construire_xlsx_bytes
 _ICI = Path(__file__).parent
 CONFIG = AnalyseConfig(
     sources=SourcesConfig(
@@ -18,4 +19,9 @@ CONFIG = AnalyseConfig(
     stress_plancher_pct=10.0, stress_corr_r2_min=0.10,
     output_dir=str(_ICI / "outputs") + "/")
 if __name__ == "__main__":
-    run(CONFIG, verbose=True)
+    res = run(CONFIG, verbose=True)
+    out = Path(CONFIG.output_dir)
+    (out / "Rapport_Thermie.docx").write_bytes(construire_docx_bytes(res))
+    (out / "Donnees_Thermie.xlsx").write_bytes(construire_xlsx_bytes(res))
+    print("✅ Rapport_Thermie.docx")
+    print("✅ Donnees_Thermie.xlsx")

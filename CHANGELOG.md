@@ -1,5 +1,55 @@
 # Journal des versions
 
+## 4.1 — 2026-07-31
+- **Rapport Word générique** : retrait de la mention HMUC/Moselle sur la
+  page de garde et de tous les renvois à la note méthodologique — le
+  document ne présuppose plus un contexte d'étude particulier.
+- **Axe des dates adaptatif** (chronique thermique et contrôle qualité) :
+  l'intervalle entre repères s'ajuste à l'étendue réelle de la période
+  (mensuel en-deçà de 400 j, trimestriel jusqu'à 900 j, semestriel jusqu'à
+  ~6 ans, annuel au-delà) — corrige le chevauchement de dizaines
+  d'étiquettes observé sur les chroniques pluriannuelles.
+- **§1.5** : ajout d'une phrase d'intérêt de la normalisation climatique —
+  rendre les stations et les années comparables malgré des contextes et
+  des périodes d'enregistrement hétérogènes.
+- **Corrélations indicateurs scindées** : les 2 corrélations sans débit
+  (amplitude et écart eau-air vs température de l'eau) rejoignent le §2.2,
+  toujours produites même sans hydrométrie ; les 2 avec débit restent au
+  §4.3, désormais générées indépendamment plutôt que par découpage d'une
+  figure à 4 panneaux.
+- **Chapitre de synthèse** : nouveau bloc « Débit de référence retenu » en
+  ouverture — Q_thermie_bio en priorité (résultat principal), repli
+  explicite et commenté sur Q_thermie_fonc si non déterminé, PNDA
+  désinfluencé présenté avant l'influencé. Repris dans la fiche station du
+  classeur Excel. Testé sur les deux branches (bio déterminé / repli fonc).
+
+## 4.0 — 2026-07-30
+- **Livrables station « prêts à copier »** — nouveau module `livrables.py` :
+  - **Rapport Word** organisé en chapitres séparés par des sauts de page,
+    axé résultats (les rappels méthodologiques sont réduits à de courts
+    renvois à la note méthodologique Point 2) : 1. Données mobilisées et
+    qualité — avec un encadré dédié à la **validité du modèle air–eau**,
+    fondement de toute la normalisation ; 2. Vulnérabilité thermique
+    estivale ; 3. Vulnérabilité de la reproduction ; 4. Relation
+    débit–température, diagnostic de validité de la démarche et débits de
+    référence ; 5. Synthèse (SGVT, conclusion, réserves, fiche de synthèse).
+    Les chapitres sans objet sont omis.
+  - **Classeur Excel** en onglets miroirs du rapport.
+- **`redaction.py`** — source unique des textes d'interprétation (verdicts,
+  robustesse, conclusions, réserves), consommée à la fois par l'application
+  et par les livrables : le rapport dit nécessairement la même chose que ce
+  que l'utilisateur a lu à l'écran, et une correction de formulation se
+  propage partout.
+- **Fiche de synthèse à schéma fixe** (38 colonnes invariantes) : une
+  station sans débit produit exactement les mêmes colonnes qu'une station
+  complète, renseignées « non applicable ». Vérifié sur 4 configurations et
+  3 stations réelles : les lignes s'empilent directement dans un tableau de
+  comparaison inter-sites, sans aucune valeur manquante ni retraitement.
+- **SGVT déplacé au chapitre de synthèse** : il agrège quatre composantes
+  dont la dernière (fraie) n'est établie qu'au chapitre 3 ; le présenter
+  une fois toutes ses composantes connues supprime une référence en avant.
+- Nouvelle dépendance : `python-docx`.
+
 ## 3.7 — 2026-07-29
 - **Clim1** : remplace l'écart aux normales par la température de l'air
   annuelle moyenne, dans le même style visuel que les précipitations
