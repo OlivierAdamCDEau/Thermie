@@ -112,8 +112,31 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
             seuil_comblement=config.seuil_comblement_desinf, verbose=verbose)
         res.diag_debit = diag
         res.base_debit = diag["base"]
-        if diag.get("bascule"):
-            res.avertissements.append(diag["message"])
+        if diag.get("desinfluence_disponible") and not diag.get("comble"):
+            ej = diag.get("ecart_jjas")
+            ea = diag.get("ecart_annuel")
+            if ej is not None and ej == ej:
+                res.avertissements.append(
+                    f"Débit désinfluencé disponible mais ses trous n'ont pas "
+                    f"été comblés par l'influencé (écart médian JJAS "
+                    f"{ej*100:.1f}% ≥ seuil {diag['seuil_comblement']*100:.0f}%) "
+                    f"— sa distribution reste donc partielle pour la lecture "
+                    f"PNDA.")
+            elif ea is not None and ea == ea:
+                res.avertissements.append(
+                    f"Débit désinfluencé disponible mais ses trous n'ont pas "
+                    f"été comblés par l'influencé (pas assez de jours communs "
+                    f"en JJAS pour évaluer cet écart ; écart médian annuel "
+                    f"{ea*100:.1f}% ≥ seuil {diag['seuil_comblement']*100:.0f}%) "
+                    f"— sa distribution reste donc partielle pour la lecture "
+                    f"PNDA.")
+            else:
+                res.avertissements.append(
+                    "Débit désinfluencé disponible mais son écart avec "
+                    "l'influencé n'a pas pu être évalué (trop peu de jours "
+                    "communs, annuel comme JJAS) — ses trous n'ont donc pas "
+                    "été comblés et sa distribution reste partielle pour la "
+                    "lecture PNDA.")
     else:
         res.diag_debit = dict(base="aucune",
                               message="Mode thermie seule — pas de débits de référence.")
@@ -206,17 +229,16 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
                 q_seuil_vuln=q_vuln, df=df)
             res.debits_reference = cst
 
-            # Charger les DEUX distributions disponibles pour les PNDA
+            # Charger les DEUX distributions disponibles pour les PNDA — et
+            # pour la figure, qui montre désormais les deux courbes quand le
+            # désinfluencé est disponible (plutôt qu'une seule « base »).
             q_inf_series = q_des_series = None
             if config.sources.fichier_debit:
                 q_inf_series = io.charger_debit(config.sources.fichier_debit)["Q"]
             if config.sources.fichier_debit_desinf:
                 q_des_series = io.charger_debit(config.sources.fichier_debit_desinf)["Q"]
-            # df_q_all = distribution de la base de calcul (pour les figures)
-            res.df_q_all = io.charger_debit(
-                config.sources.fichier_debit_desinf
-                if (config.sources.fichier_debit_desinf and res.base_debit == "désinfluencé")
-                else config.sources.fichier_debit)
+            # df_q_all = distribution d'analyse (toujours l'influencé).
+            res.df_q_all = io.charger_debit(config.sources.fichier_debit)
 
             # Sorties : chaque débit de référence exprimé (valeur brute unique)
             # avec son PNDA sur chaque courbe (désinfluencé prioritaire).
@@ -234,7 +256,7 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
             F["debits_vuln"] = figmod.fig_vulnerabilite_debit(
                 dinf, ctx, nom, out, q_bio_final=cst["q_thermie_bio"])
             F["debits_classes"] = figmod.fig_debits_classes(
-                cst, dinf, res.df_q_all, ctx, nom, out, base=res.base_debit)
+                cst, dinf, q_inf_series, ctx, nom, out, q_desinf=q_des_series)
         elif dinf:
             F["debits_inflexion"] = figmod.fig_debits_inflexion(dinf, sens, ctx, nom, out)
 

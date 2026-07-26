@@ -1093,8 +1093,8 @@ def matrice_diagnostic(vul_res, relation, debits_inflexion=None,
         libelle = "Approche thermique peu opérante"
         conduite = ("Ni problème thermique constaté, ni lien entre débit et "
                     "température. L'approche « débits thermiques » n'apporte pas "
-                    "d'élément de gestion sur cette station ; d'autres volets "
-                    "de l'étude HMUC sont plus pertinents.")
+                    "d'élément de gestion sur cette station ; d'autres approches "
+                    "de l'étude sont plus pertinentes.")
         couleur = "#7F8C8D"
 
     return dict(case=case, cle=cle, libelle=libelle, conduite=conduite,

@@ -282,6 +282,7 @@ def fig_vulnerabilite(vul, contexte, nom, output_dir, periode=None):
                      bbox_to_anchor=(0.5, 0.02), ncol=min(len(annees) + 2, 8),
                      title="Année", title_fontsize=8.5)
     style_legend(leg)
+    _note_cycle_couleurs(ax2, annees)
     plt.suptitle(f"{nom} — Vulnérabilité thermique\n{contexte['label']}",
                  fontsize=13, fontweight="bold", y=1.03)
     plt.tight_layout(rect=[0, 0.05, 1, 1])
@@ -300,10 +301,36 @@ NOMS_PHASE = {"prefrai": "Pré-frai", "ponte": "Ponte", "incubation": "Incubatio
 # l'autre (fraie-croissance et vulnérabilité partagent ce code couleur, à la
 # demande d'une lecture cohérente entre les deux onglets).
 _PALETTE_ANNEES = plt.get_cmap("tab10").colors
+_N_PALETTE = len(_PALETTE_ANNEES)
 
 
 def _couleur_annee(annee):
-    return _PALETTE_ANNEES[int(annee) % 10]
+    """Couleur déterministe d'une année : la même année porte toujours la
+    même teinte, y compris d'une figure à l'autre (fraie-croissance et
+    vulnérabilité partagent ce code couleur). tab10 est retenue pour sa
+    séparation visuelle (distance RGB minimale ≈ 0,27, contre ≈ 0,10 pour
+    une palette à 20 teintes) : au-delà de 10 années les couleurs se
+    répètent, ce que `_note_cycle_couleurs` rend explicite plutôt que de
+    laisser deux années se confondre silencieusement."""
+    return _PALETTE_ANNEES[int(annee) % _N_PALETTE]
+
+
+def _note_cycle_couleurs(ax, annees):
+    """Signale sur la figure que des années partagent une couleur (chronique
+    de plus de 10 ans) — la limite devient visible au lieu d'être un piège
+    de lecture silencieux."""
+    annees = sorted({int(a) for a in annees})
+    if len(annees) <= _N_PALETTE:
+        return
+    groupes = {}
+    for a in annees:
+        groupes.setdefault(a % _N_PALETTE, []).append(a)
+    doublons = ["/".join(str(x) for x in v) for v in groupes.values() if len(v) > 1]
+    ax.text(0.5, -0.30, "⚠ Plus de 10 années : certaines partagent une couleur ("
+            + " · ".join(doublons[:4])
+            + (" …" if len(doublons) > 4 else "") + ")",
+            transform=ax.transAxes, fontsize=7.5, ha="center", va="top",
+            color="#B9770D", style="italic")
 
 
 def _mois_debut_saison(phases):
@@ -459,6 +486,7 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir, periode=None):
         leg = ax.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.32),
                         ncol=ncol_leg, frameon=True, title=titre_leg, title_fontsize=8.5)
         style_legend(leg)
+        _note_cycle_couleurs(ax, [c["date_dt"].min().year for c in campagnes])
 
         info = (f"Coeff. saisonnier air→eau : {s['m_saison']:.2f}  ·  "
                 f"Sévérité moyenne (/3) : {s['sev_moy']:.2f}  ·  "
@@ -816,37 +844,65 @@ def fig_vulnerabilite_debit(debit_res, contexte, nom, output_dir, q_bio_final=No
 # ============================================================
 
 
-def fig_debits_classes(cst_res, debit_res, df_q_all, contexte, nom, output_dir, base="influencé"):
-    if cst_res is None or df_q_all is None or "Q" not in df_q_all.columns:
-        return
+def fig_debits_classes(cst_res, debit_res, q_influence, contexte, nom, output_dir,
+                       q_desinf=None):
+    """
+    Courbe des débits classés — affiche TOUJOURS la courbe influencée (base
+    d'analyse), et EN PLUS la courbe désinfluencée dès qu'elle est
+    disponible, plutôt qu'une seule « base » choisie par bascule. Chaque
+    débit de référence (valeur brute unique) est repéré sur les DEUX
+    courbes quand les deux existent — sa position (le PNDA) diffère
+    naturellement d'une distribution à l'autre, ce qui rend visible
+    l'écart entre régime observé et régime naturalisé.
+    """
+    if cst_res is None or q_influence is None:
+        return None
     q_bio = cst_res.get("q_thermie_bio")
     q_fonc = cst_res.get("q_thermie_fonc")
-    pnd_bio = _pnda(df_q_all["Q"], q_bio)
-    pnd_fonc = _pnda(df_q_all["Q"], q_fonc)
 
     fig, ax = plt.subplots(figsize=(10, 6.2)); ax.set_facecolor("#f8f9fa")
-    q_sorted = np.sort(df_q_all["Q"].dropna().values)
-    pnd_x = np.arange(1, len(q_sorted)+1)/len(q_sorted)*100
-    ax.plot(pnd_x, q_sorted, color="#2980b9", lw=2.0, label=f"Débit classé ({base}, toutes années)")
-    ax.fill_between(pnd_x, q_sorted, alpha=0.08, color="#2980b9")
 
-    if q_bio is not None:
-        ax.axhline(q_bio, color="#c0392b", lw=2.5, ls="-",
-                   label=f"★ Q_thermie_bio = {q_bio:.3f} m³/s (PNDA={pnd_bio:.0f}%)")
-        ax.plot(pnd_bio, q_bio, "s", color="#c0392b", ms=12, zorder=6,
+    def _courbe(serie, couleur, style, label):
+        q_sorted = np.sort(serie.dropna().values)
+        if len(q_sorted) == 0:
+            return
+        pnd_x = np.arange(1, len(q_sorted)+1)/len(q_sorted)*100
+        ax.plot(pnd_x, q_sorted, color=couleur, lw=2.0, ls=style, label=label)
+        ax.fill_between(pnd_x, q_sorted, alpha=0.06, color=couleur)
+
+    _courbe(q_influence, "#5DADE2", "-", "Débit classé — influencé (base d'analyse)")
+    if q_desinf is not None and q_desinf.notna().sum() > 0:
+        _courbe(q_desinf, "#1E8449", "--", "Débit classé — désinfluencé")
+
+    def _reperes(valeur, couleur, marqueur, label_base):
+        if valeur is None:
+            return
+        pnd_inf = _pnda(q_influence, valeur)
+        ax.plot(pnd_inf, valeur, marqueur, color=couleur, ms=11, zorder=6,
                 markeredgecolor="white", markeredgewidth=2)
-    if q_fonc is not None:
-        ax.axhline(q_fonc, color="#8e44ad", lw=2.0, ls=":",
-                   label=f"Q_thermie_fonc = {q_fonc:.3f} m³/s (PNDA={pnd_fonc:.0f}%, appoint)")
-        ax.plot(pnd_fonc, q_fonc, "o", color="#8e44ad", ms=11, zorder=6,
-                markeredgecolor="white", markeredgewidth=2)
+        txt = f"{label_base} = {valeur:.3f} m³/s  (PNDA inf. {pnd_inf:.0f}%"
+        if q_desinf is not None and q_desinf.notna().sum() > 0:
+            pnd_des = _pnda(q_desinf, valeur)
+            ax.plot(pnd_des, valeur, marqueur, color=couleur, ms=11, zorder=6,
+                    markeredgecolor="#1E8449", markeredgewidth=2)
+            txt += f", désinf. {pnd_des:.0f}%"
+        txt += ")"
+        ax.axhline(valeur, color=couleur, lw=2.0,
+                   ls="-" if label_base.startswith("★") else ":", label=txt)
+
+    _reperes(q_bio, "#c0392b", "s", "★ Q_thermie_bio")
+    _reperes(q_fonc, "#8e44ad", "o", "Q_thermie_fonc (appoint)")
 
     ax.set_yscale("log")
     ax.set_xlabel("Probabilité de Non-Dépassement Annuel — PNDA (%)", fontsize=12)
     ax.set_ylabel("Débit (m³/s) — échelle log", fontsize=12)
-    ax.set_title(f"{nom} — Courbe des débits classés\nDébits de référence thermique · base {base}",
-                 fontsize=12, fontweight="bold")
-    leg = ax.legend(fontsize=9, loc="upper left"); style_legend(leg)
+    sous_titre = ("Deux distributions affichées" if q_desinf is not None
+                 and q_desinf.notna().sum() > 0 else "Distribution influencée seule "
+                 "(désinfluencé non fourni)")
+    ax.set_title(f"{nom} — Courbe des débits classés\n"
+                f"Débits de référence thermique · {sous_titre}",
+                fontsize=12, fontweight="bold")
+    leg = ax.legend(fontsize=8.5, loc="upper left"); style_legend(leg)
     ax.grid(True, alpha=0.3, which="both")
     ax.set_xlim(0, 100)
     plt.tight_layout()
@@ -1034,7 +1090,7 @@ def fig_matrice_diagnostic(mat, nom, output_dir):
         (0, 0): (3, "Pas d'enjeu actuel,\nlevier disponible",
                  "Surveillance\n(climat, prélèvements)", "#1E8449"),
         (1, 0): (4, "Approche thermique\npeu opérante",
-                 "Autres volets HMUC\nplus pertinents", "#7F8C8D"),
+                 "Autres approches\nplus pertinentes", "#7F8C8D"),
     }
     for (cx, cy), (num, titre, sous, coul) in cases.items():
         actif = (num == mat["case"])

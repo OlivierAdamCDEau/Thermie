@@ -1,5 +1,73 @@
 # Journal des versions
 
+## 4.4 — 2026-08-03
+- **Revue de conformité** de l'ensemble des demandes accumulées depuis le
+  début du chantier de mise en forme : 40 points vérifiés un à un dans le
+  code livré (et non de mémoire), tous conformes — mise en forme des
+  figures, tableaux, légendes, jauge SGVT, lacunes, période d'affichage,
+  fraie par campagne, échelles log, volet climatique, livrables docx/xlsx,
+  réglages de la barre latérale, gestion du débit désinfluencé.
+- **Défaut latent corrigé** : au-delà de 10 années de chronique, deux
+  années prenaient silencieusement la même couleur sur les figures
+  fraie-croissance et vulnérabilité (palette tab10 cyclique). La palette
+  est conservée — sa séparation visuelle (distance RGB minimale ≈ 0,27)
+  est nettement supérieure à celle d'une palette de 20 teintes (≈ 0,10),
+  et le cas courant reste 2 à 4 années — mais la limite est désormais
+  signalée explicitement sur la figure, avec le détail des années
+  concernées (ex. « 2010/2020 · 2011/2021 »), au lieu d'un piège de
+  lecture invisible.
+
+## 4.3 — 2026-08-02
+- **Refonte de la gestion du débit désinfluencé** (donnée rare à valoriser
+  pleinement, sans compromettre la robustesse de l'analyse) :
+  - **Suppression de la bascule d'analyse.** La recherche du seuil
+    biologique (Q*_vuln) et le test de causalité débit↔température se font
+    désormais toujours sur l'influencé — l'eau réellement présente, seule
+    variable causalement reliée à la température observée. Le
+    désinfluencé, reconstruction hypothétique, ne sert plus de base
+    d'analyse conditionnelle.
+  - **Restitution systématique.** Dès que le désinfluencé est fourni, son
+    PNDA et sa courbe de débits classés sont toujours calculés et affichés
+    à côté de ceux de l'influencé — plus jamais conditionnés à un seuil de
+    proximité entre les deux séries. Une forte divergence est elle-même
+    une information (intensité de la pression anthropique), pas une raison
+    d'écarter la donnée.
+  - **Deux écarts médians, sans arbitrage** : annuel et juin-septembre,
+    tous deux calculés et restitués. L'écart annuel seul peut masquer une
+    divergence estivale majeure — vérifié sur cas test (2,9 % annuel
+    contre 1027 % en JJAS pour un prélèvement concentré en été).
+  - Le comblement des trous du désinfluencé par l'influencé reste
+    conditionné à un seuil (inchangé dans son principe), mais retenu
+    seulement si le pire des deux écarts (annuel, JJAS) passe le test.
+  - L'écart JJAS rejoint la fiche de synthèse à schéma fixe (43 colonnes)
+    comme indicateur comparable entre stations ; le bandeau de l'app
+    l'affiche en évidence quand le désinfluencé est disponible.
+  - Messages d'avertissement robustes aux cas limites (jours communs
+    insuffisants en JJAS et/ou à l'année).
+
+## 4.2 — 2026-08-01
+- **Outil rendu générique** : dernières mentions d'un contexte d'étude
+  particulier retirées — titre de page, en-tête principal de l'app, texte
+  de la matrice de diagnostic et de ses conduites à tenir (cas « approche
+  peu opérante »). Plus aucune référence dans le code ni les livrables.
+- **Barre latérale réorganisée** :
+  - Section 1 (Données) : les deux téléchargements de débit (influencé,
+    désinfluencé) remontent juste après eau/air, visibles d'emblée qu'ils
+    soient utilisés ou non (un message signale s'ils seront ignorés en
+    mode « thermie seule »).
+  - Section 2 (Contexte & mode) : accueille désormais le calcul des
+    normales (déplacé depuis la section 1) et le volet climatique
+    (renommé, la mention « bonus » retirée). Le seuil de comblement
+    désinfluencé devient optionnel — une case à cocher (décochée par
+    défaut) donne accès au réglage fin ; sans cocher, la valeur par défaut
+    (10 %) s'applique silencieusement.
+  - Section 3 (Métadonnées) : ajout du nom de la station Météo-France de
+    référence, propagé dans le récapitulatif des sources, la fiche de
+    synthèse à schéma fixe (39 colonnes désormais) et les deux livrables.
+- **Contrôle qualité** : « Exclure la saison JJAS entière » décochée par
+  défaut ; seuil d'écart hors d'eau porté à 10 °C par défaut (plafond du
+  curseur relevé de 10 à 15 °C).
+
 ## 4.1 — 2026-07-31
 - **Rapport Word générique** : retrait de la mention HMUC/Moselle sur la
   page de garde et de tous les renvois à la note méthodologique — le

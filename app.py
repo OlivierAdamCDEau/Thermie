@@ -18,7 +18,7 @@ from thermie_debits.config import (AnalyseConfig, SourcesConfig, QCConfig,
 from thermie_debits.orchestrator import run
 from thermie_debits import figures as figmod
 
-st.set_page_config(page_title="Thermie & Débits — HMUC Moselle",
+st.set_page_config(page_title="Thermie & Débits de référence",
                    page_icon="🌡️", layout="wide")
 
 
@@ -59,6 +59,24 @@ up_air = st.sidebar.file_uploader(
          "référence, couvrant au moins 1991–2020 (et idéalement les années "
          "des mesures d'eau). L'app calcule elle-même normales et écarts. "
          "Colonnes reconnues : AAAAMMJJ + TM (RR optionnel).")
+st.sidebar.caption("Débits (station hydrométrique de rattachement) — utilisés "
+                   "seulement si le mode « Thermie + débits » est retenu "
+                   "ci-dessous.")
+up_deb = st.sidebar.file_uploader("Débit influencé *", type=["csv"])
+up_deb_des = st.sidebar.file_uploader("Débit désinfluencé (optionnel)", type=["csv"])
+
+st.sidebar.header("2. Contexte & mode")
+contexte_key = st.sidebar.selectbox(
+    "Contexte piscicole", options=list(CONTEXTES.keys()),
+    format_func=lambda k: CONTEXTES[k]["label"], index=1)
+mode = st.sidebar.radio(
+    "Mode d'analyse", options=["thermie_seule", "thermie_debits"],
+    format_func=lambda m: {"thermie_seule": "Thermie seule (SGVT, sans débit)",
+                           "thermie_debits": "Thermie + débits de référence"}[m],
+    index=1)
+if mode == "thermie_seule" and (up_deb or up_deb_des):
+    st.sidebar.caption("ℹ️ Fichiers de débit chargés mais ignorés — mode "
+                       "« Thermie seule » sélectionné.")
 
 with st.sidebar.expander("📐 Calcul des normales (avancé)"):
     norm_fenetre = st.slider("Lissage des normales (± jours)", 3, 20, 10, 1)
@@ -72,26 +90,21 @@ with st.sidebar.expander("📐 Calcul des normales (avancé)"):
              "Mettre 1 pour revenir à l'anomalie journalière (série beaucoup "
              "plus bruitée).")
 
-st.sidebar.header("2. Contexte & mode")
-contexte_key = st.sidebar.selectbox(
-    "Contexte piscicole", options=list(CONTEXTES.keys()),
-    format_func=lambda k: CONTEXTES[k]["label"], index=1)
-mode = st.sidebar.radio(
-    "Mode d'analyse", options=["thermie_seule", "thermie_debits"],
-    format_func=lambda m: {"thermie_seule": "Thermie seule (SGVT, sans débit)",
-                           "thermie_debits": "Thermie + débits de référence"}[m],
-    index=1)
-
-up_deb = up_deb_des = None
 seuil_comblement = 0.10
 if mode == "thermie_debits":
-    st.sidebar.caption("Débits (station hydrométrique de rattachement)")
-    up_deb = st.sidebar.file_uploader("Débit influencé *", type=["csv"])
-    up_deb_des = st.sidebar.file_uploader("Débit désinfluencé (optionnel)", type=["csv"])
-    seuil_comblement = st.sidebar.slider(
-        "Seuil comblement désinfluencé (écart médian max)", 0.0, 0.30, 0.10, 0.01,
-        help="Sous ce seuil, les trous du désinfluencé sont comblés par "
-             "l'influencé. Au-dessus, bascule en base influencée.")
+    ajuster_comblement = st.sidebar.checkbox(
+        "Ajuster le seuil de comblement désinfluencé (avancé)", False,
+        help="Sous ce seuil d'écart médian (le pire des deux, annuel et "
+             "JJAS) entre débit influencé et désinfluencé, les trous du "
+             "désinfluencé sont comblés par l'influencé, pour disposer d'une "
+             "distribution désinfluencée aussi complète que possible. "
+             "N'affecte jamais l'analyse elle-même (toujours menée sur "
+             "l'influencé) — seulement la qualité de la restitution PNDA "
+             "désinfluencée. La valeur par défaut (10 %) convient dans la "
+             "grande majorité des cas.")
+    if ajuster_comblement:
+        seuil_comblement = st.sidebar.slider(
+            "Seuil comblement désinfluencé (écart médian max)", 0.0, 0.30, 0.10, 0.01)
     with st.sidebar.expander("🎚️ Déclenchement du volet stress (avancé)"):
         st.caption("Le volet létal déclenche toujours Q_thermie_bio. Le volet "
                    "stress chronique n'est retenu que si le stress est matériel "
@@ -107,10 +120,13 @@ if mode == "thermie_debits":
 else:
     stress_plancher, stress_r2 = 10.0, 0.10
 
+faire_clim = st.sidebar.checkbox("Inclure le volet climatique", False)
+
 st.sidebar.header("3. Métadonnées")
 nom_ce = st.sidebar.text_input("Nom du cours d'eau", "Cours d'eau")
 loc_sonde = st.sidebar.text_input("Localisation de la sonde", "")
 nom_station = st.sidebar.text_input("Station hydrométrique de référence", "")
+nom_station_meteo = st.sidebar.text_input("Station Météo-France de référence", "")
 
 # --- QC avancé ---
 with st.sidebar.expander("⚙️ Contrôle qualité (avancé)"):
@@ -120,12 +136,11 @@ with st.sidebar.expander("⚙️ Contrôle qualité (avancé)"):
     qc.t_eau_min = c1.number_input("T_eau min (°C)", value=qc.t_eau_min, step=0.5)
     qc.t_eau_max = c2.number_input("T_eau max (°C)", value=qc.t_eau_max, step=0.5)
     qc.hors_eau = st.checkbox("Détection sonde hors d'eau", qc.hors_eau)
-    qc.hors_eau_ecart_seuil = st.slider("Écart hors d'eau seuil (°C)", 1.0, 10.0,
-                                        qc.hors_eau_ecart_seuil, 0.5)
+    qc.hors_eau_ecart_seuil = st.slider("Écart hors d'eau seuil (°C)", 1.0, 15.0,
+                                        10.0, 0.5)
     qc.hors_eau_min_jours = st.number_input("Jours suspects min",
                                             value=qc.hors_eau_min_jours, step=1)
-    qc.hors_eau_exclut_saison = st.checkbox("Exclure la saison JJAS entière",
-                                            qc.hors_eau_exclut_saison)
+    qc.hors_eau_exclut_saison = st.checkbox("Exclure la saison JJAS entière", False)
     qc.plateau = st.checkbox("Détection plateau (sonde bloquée)", qc.plateau)
     qc.mad_outliers = st.checkbox("Outliers MAD", qc.mad_outliers)
     qc.mad_k = st.slider("Seuil MAD (k × MAD)", 10.0, 100.0, qc.mad_k, 5.0)
@@ -147,8 +162,6 @@ with st.sidebar.expander("🐟 Paramètres de reproduction (lecture)"):
     st.caption("★ phase critique · au-delà de la fenêtre élargie : létalité "
                "(côté chaud) ou échec reproducteur (côté froid, espèces à "
                "ponte printanière/estivale).")
-
-faire_clim = st.sidebar.checkbox("Inclure le volet climatique (bonus)", False)
 
 with st.sidebar.expander("📅 Période affichée (optionnelle)"):
     st.caption("Restreint uniquement la fenêtre visible des graphiques "
@@ -232,7 +245,7 @@ lancer = st.sidebar.button("▶️  Lancer l'analyse", type="primary",
 # ZONE PRINCIPALE
 # ============================================================
 st.title("Analyse thermie & débits de référence")
-st.caption(f"HMUC Moselle — approche thermique (note méthodologique Point 2) · application v{__version__} ({VERSION_DATE})")
+st.caption(f"Application v{__version__} ({VERSION_DATE})")
 with st.expander("ℹ️ Contenu de cette version"):
     st.markdown(f"**v{__version__}** — {VERSION_NOTES}")
 
@@ -253,8 +266,8 @@ if lancer:
     src = SourcesConfig(
         fichier_eau=_save_upload(up_eau), fichier_air=_save_upload(up_air),
         fichier_normales=None,
-        fichier_debit=_save_upload(up_deb) if up_deb else None,
-        fichier_debit_desinf=_save_upload(up_deb_des) if up_deb_des else None,
+        fichier_debit=_save_upload(up_deb) if (up_deb and mode == "thermie_debits") else None,
+        fichier_debit_desinf=_save_upload(up_deb_des) if (up_deb_des and mode == "thermie_debits") else None,
         eau_col_date=eau_cd, eau_col_temp=eau_ct,
         air_col_date=air_cd, air_col_temp=air_ct,
         eau_nom_fichier=up_eau.name if up_eau else "",
@@ -262,7 +275,7 @@ if lancer:
         air_nom_fichier=up_air.name if up_air else "",
         air_feuille=air_feuille, air_ligne_entete=air_ligne_ent,
         nom_cours_eau=nom_ce, localisation_sonde=loc_sonde,
-        nom_station_debit=nom_station)
+        nom_station_debit=nom_station, nom_station_meteo=nom_station_meteo)
     cfg = AnalyseConfig(sources=src, qc=qc, contexte_piscicole=contexte_key,
                         mode=mode, faire_volet_climatique=faire_clim,
                         seuil_comblement_desinf=seuil_comblement,
@@ -295,7 +308,14 @@ c1, c2, c3, c4 = st.columns(4)
 c1.metric("SGVT", f"{sg['sgvt']:.2f} / 10", sg["interp"])
 c2.metric("Composantes SGVT", f"{sg['composantes']}")
 c3.metric("Contexte", res.config.contexte_piscicole)
-c4.metric("Base débit", res.base_debit)
+dd = res.diag_debit or {}
+if dd.get("desinfluence_disponible") and dd.get("ecart_jjas") == dd.get("ecart_jjas"):
+    c4.metric("Écart inf./désinf. (JJAS)", f"{dd['ecart_jjas']*100:.0f} %",
+             help="Écart médian juin-septembre entre débit influencé et "
+                  "désinfluencé — un écart marqué signale une pression "
+                  "anthropique estivale forte sur cette station.")
+else:
+    c4.metric("Base débit", res.base_debit)
 
 for av in res.avertissements:
     st.warning(av)

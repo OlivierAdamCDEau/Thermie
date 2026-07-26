@@ -179,6 +179,7 @@ def construire_docx_bytes(res):
 
     infos = [("Localisation de la sonde", getattr(cfg, "localisation_sonde", "") or "—"),
              ("Station hydrométrique", getattr(cfg, "nom_station_debit", "") or "—"),
+             ("Station Météo-France de référence", getattr(cfg, "nom_station_meteo", "") or "—"),
              ("Mode d'analyse", "thermie + débits" if res.config.avec_debits
               else "thermie seule"),
              ("Date de production", f"{date.today():%d/%m/%Y}"),
@@ -444,6 +445,7 @@ def construire_xlsx_bytes(res):
         ["Cours d'eau", cfg.nom_cours_eau or "—"],
         ["Localisation sonde", getattr(cfg, "localisation_sonde", "") or "—"],
         ["Station hydrométrique", getattr(cfg, "nom_station_debit", "") or "—"],
+        ["Station Météo-France de référence", getattr(cfg, "nom_station_meteo", "") or "—"],
         ["Contexte piscicole", res.contexte["label"]],
         ["Mode d'analyse", "thermie + débits" if res.config.avec_debits
          else "thermie seule"],

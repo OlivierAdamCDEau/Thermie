@@ -176,85 +176,115 @@ def fusionner_debits(fichier_influence, fichier_desinfluence=None,
                      seuil_comblement=0.10, verbose=True):
     """
     Fusionne les chroniques de débit influencé et (optionnellement)
-    désinfluencé, et détermine la base de calcul selon la règle projet :
+    désinfluencé.
 
-      - Influencé seul                → base "influencé".
-      - Influencé + désinfluencé :
-          * on mesure l'écart relatif médian sur la période commune :
-                e = médiane(|Q_desinf − Q_inf| / Q_inf)
-          * si e < seuil_comblement    → base "désinfluencé", trous du
-                                         désinfluencé comblés par l'influencé
-                                         (séries proches, comblement sans risque) ;
-          * si e ≥ seuil_comblement    → BASCULE en base "influencé" (séries
-                                         trop divergentes : mélanger fausserait
-                                         la base ; on privilégie l'homogénéité
-                                         et le nombre de jours) + avertissement.
+    BASE D'ANALYSE (recherche du seuil biologique Q*_vuln, test de
+    causalité débit↔température) : TOUJOURS l'influencé. C'est l'eau
+    réellement présente qui gouverne la température observée cette
+    année-là ; le désinfluencé est une reconstruction hypothétique,
+    impropre à servir de variable causale. Il n'y a donc plus de
+    « bascule » de l'analyse elle-même selon la proximité des deux séries
+    — décision volontairement simple et toujours motivée de la même façon.
+
+    Le désinfluencé, quand il est fourni, est systématiquement conservé et
+    valorisé pour la RESTITUTION (PNDA + courbe des débits classés sur sa
+    propre distribution, ailleurs dans le pipeline) — jamais conditionné à
+    un seuil de proximité avec l'influencé : une forte divergence est
+    elle-même une information utile (intensité de la pression anthropique
+    sur la station), pas une raison de l'écarter.
+
+    Deux écarts relatifs médians sont calculés et restitués, sans qu'aucun
+    ne soit choisi par défaut à la place de l'autre :
+      - écart ANNUEL (toutes saisons) ;
+      - écart JUIN-SEPTEMBRE (JJAS — la fenêtre qui conditionne l'étiage).
+    Un écart annuel faible peut masquer une divergence estivale majeure
+    (prélèvements concentrés en été, recharge hivernale complète) : les
+    deux sont donc toujours calculés plutôt que d'en choisir un seul.
+
+    Le comblement des trous du désinfluencé par l'influencé (pour disposer
+    d'une distribution désinfluencée aussi complète que possible en vue de
+    son PNDA propre) reste conditionné à un seuil, mais retenu seulement si
+    les DEUX écarts (annuel ET JJAS) sont sous ce seuil — le pire des deux
+    doit être acceptable, pour ne pas combler des trous d'été avec un
+    influencé très éloigné alors que l'écart annuel semblerait rassurant.
 
     Retourne (df_q, diag) où :
-      df_q : DataFrame [date, Q, Q_inf, (Q_desinf)]  — Q = base de calcul
-      diag : dict décrivant la base retenue et le diagnostic d'écart.
+      df_q : DataFrame [date, Q, Q_inf, (Q_desinf)] — Q = influencé (base
+             d'analyse), Q_desinf = série désinfluencée (comblée ou non).
+      diag : dict décrivant les écarts et l'état du comblement.
     """
     if fichier_influence is None:
         return None, dict(base="aucune", message="Aucun fichier débit fourni.")
 
     df_inf = charger_debit(fichier_influence).rename(columns={"Q": "Q_inf"})
-    diag = dict(base="influencé", ecart_median=None, n_inf=len(df_inf),
-                n_desinf=0, n_comble=0, bascule=False,
+    diag = dict(base="influencé", desinfluence_disponible=False,
+                ecart_annuel=None, ecart_jjas=None, n_inf=len(df_inf),
+                n_desinf=0, n_comble=0, comble=False,
                 seuil_comblement=seuil_comblement)
 
     if not fichier_desinfluence:
         df_inf["Q"] = df_inf["Q_inf"]
-        diag["message"] = ("Base influencée (désinfluencé non fourni). "
-                           "La note recommande le désinfluencé pour la synthèse.")
+        diag["message"] = ("Base d'analyse : influencé (désinfluencé non "
+                           "fourni — la restitution finale y perd la lecture "
+                           "PNDA désinfluencée, à privilégier si disponible).")
         if verbose:
-            print(f"  Base de débit : influencé ({len(df_inf)} j) — "
+            print(f"  Base d'analyse (débit) : influencé ({len(df_inf)} j) — "
                   f"désinfluencé non fourni")
         return df_inf[["date", "Q_inf", "Q"]], diag
 
     df_des = charger_debit(fichier_desinfluence).rename(columns={"Q": "Q_desinf"})
     df = df_inf.merge(df_des, on="date", how="outer").sort_values("date")
+    diag["desinfluence_disponible"] = True
     diag["n_desinf"] = int(df["Q_desinf"].notna().sum())
 
-    # Écart relatif médian sur la période commune (les deux existent)
-    commun = df.dropna(subset=["Q_inf", "Q_desinf"])
-    commun = commun[commun["Q_inf"] > 0]
-    if len(commun) >= 5:
-        ecart = float(np.median(
-            (commun["Q_desinf"] - commun["Q_inf"]).abs() / commun["Q_inf"]))
-    else:
-        ecart = np.nan
-    diag["ecart_median"] = ecart
-    diag["n_commun"] = len(commun)
+    def _ecart_median(sub):
+        commun = sub.dropna(subset=["Q_inf", "Q_desinf"])
+        commun = commun[commun["Q_inf"] > 0]
+        if len(commun) < 5:
+            return np.nan, len(commun)
+        return float(np.median(
+            (commun["Q_desinf"] - commun["Q_inf"]).abs() / commun["Q_inf"])), len(commun)
 
-    seuil_ok = (not np.isnan(ecart)) and ecart < seuil_comblement
+    ecart_an, n_commun_an = _ecart_median(df)
+    mois = pd.to_datetime(df["date"]).dt.month
+    ecart_jjas, n_commun_jjas = _ecart_median(df[mois.isin([6, 7, 8, 9])])
+    diag.update(ecart_annuel=ecart_an, n_commun_annuel=n_commun_an,
+                ecart_jjas=ecart_jjas, n_commun_jjas=n_commun_jjas)
 
-    if seuil_ok:
-        # Base désinfluencée, trous comblés par l'influencé
-        df["Q"] = df["Q_desinf"].where(df["Q_desinf"].notna(), df["Q_inf"])
-        n_comble = int(df["Q_desinf"].isna().sum() & df["Q_inf"].notna().sum()) \
-            if False else int((df["Q_desinf"].isna() & df["Q_inf"].notna()).sum())
-        diag.update(base="désinfluencé", n_comble=n_comble, bascule=False,
-                    message=(f"Base désinfluencée (écart médian "
-                             f"{ecart*100:.1f}% < {seuil_comblement*100:.0f}%). "
-                             f"{n_comble} jour(s) comblé(s) par l'influencé. "
-                             f"Influencé chargé pour information."))
-        if verbose:
-            print(f"  Base de débit : désinfluencé — écart médian {ecart*100:.1f}% "
-                  f"< {seuil_comblement*100:.0f}% → {n_comble} j comblés par influencé")
+    # Comblement des trous du désinfluencé : retenu seulement si le PIRE des
+    # deux écarts (annuel, JJAS) reste sous le seuil — un écart annuel
+    # rassurant ne suffit pas si la divergence estivale est forte.
+    ecarts_valides = [e for e in (ecart_an, ecart_jjas) if not np.isnan(e)]
+    comble_ok = bool(ecarts_valides) and max(ecarts_valides) < seuil_comblement
+
+    df["Q"] = df["Q_inf"]  # base d'analyse : toujours influencé
+    if comble_ok:
+        n_comble = int((df["Q_desinf"].isna() & df["Q_inf"].notna()).sum())
+        df["Q_desinf"] = df["Q_desinf"].where(df["Q_desinf"].notna(), df["Q_inf"])
+        diag.update(comble=True, n_comble=n_comble)
+        msg_comble = (f"trous du désinfluencé comblés par l'influencé "
+                     f"({n_comble} j)")
     else:
-        # Écart trop fort → bascule tout en influencé + avertissement
-        df["Q"] = df["Q_inf"]
-        diag.update(base="influencé", bascule=True,
-                    message=(f"⚠ Écart médian influencé/désinfluencé "
-                             f"{ecart*100:.1f}% ≥ {seuil_comblement*100:.0f}% : "
-                             f"séries trop divergentes. BASCULE en base INFLUENCÉE "
-                             f"(homogénéité + nb de jours). Attention : forte "
-                             f"divergence = fortes pressions anthropiques — les "
-                             f"seuils sont donc exprimés en influencé pour cette "
-                             f"station."))
-        if verbose:
-            print(f"  ⚠️  Base de débit : influencé (BASCULE) — écart médian "
-                  f"{ecart*100:.1f}% ≥ {seuil_comblement*100:.0f}%")
+        msg_comble = ("trous du désinfluencé NON comblés — écart annuel "
+                     f"{ecart_an*100:.1f}%" if not np.isnan(ecart_an) else
+                     "trous du désinfluencé NON comblés") + \
+                     (f" / JJAS {ecart_jjas*100:.1f}%" if not np.isnan(ecart_jjas)
+                      else "") + f" ≥ seuil {seuil_comblement*100:.0f}%"
+
+    diag["message"] = (
+        f"Base d'analyse : influencé ({len(df)} j). Désinfluencé disponible "
+        f"({diag['n_desinf']} j) — écart médian annuel "
+        f"{ecart_an*100:.1f}% / JJAS "
+        f"{ecart_jjas*100:.1f}% ; {msg_comble}." if not (np.isnan(ecart_an) or
+        np.isnan(ecart_jjas)) else
+        f"Base d'analyse : influencé ({len(df)} j). Désinfluencé disponible "
+        f"({diag['n_desinf']} j) ; {msg_comble}.")
+    if verbose:
+        ea = f"{ecart_an*100:.1f}%" if not np.isnan(ecart_an) else "n/d"
+        ej = f"{ecart_jjas*100:.1f}%" if not np.isnan(ecart_jjas) else "n/d"
+        print(f"  Base d'analyse (débit) : influencé — désinfluencé "
+              f"disponible, écart médian annuel {ea} / JJAS {ej} — "
+              f"{msg_comble}")
 
     cols = ["date", "Q_inf", "Q_desinf", "Q"]
     return df[[c for c in cols if c in df.columns]].dropna(subset=["Q"]), diag

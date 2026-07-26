@@ -38,7 +38,10 @@ def synthese_sources(res):
                        f"({len(d)} jours retenus après contrôle qualité)"))
     if res.df_air is not None and len(res.df_air):
         da = pd.to_datetime(res.df_air["date"])
-        lignes.append(("Température de l'air",
+        libelle_air = "Température de l'air"
+        if getattr(cfg, "nom_station_meteo", ""):
+            libelle_air += f" ({cfg.nom_station_meteo})"
+        lignes.append((libelle_air,
                        f"{da.min():%d/%m/%Y} → {da.max():%d/%m/%Y}  "
                        f"({len(res.df_air)} jours)"))
     dn = res.diag_normales or {}
@@ -336,7 +339,22 @@ def interpretation_debits(res):
             f"Q_thermie_fonc = {fonc['valeur']:.3f} m³/s — rupture de régime "
             f"thermique (information d'appoint, ne se substitue pas au résultat "
             f"principal).")
-    lignes.append(f"Base de calcul retenue : {ds.get('base_calcul', res.base_debit)}.")
+    dd = res.diag_debit or {}
+    lignes.append("Base d'analyse (recherche du seuil, test de causalité) : "
+                  "toujours l'influencé — c'est l'eau réellement présente qui "
+                  "gouverne la température observée cette année-là.")
+    if dd.get("desinfluence_disponible"):
+        ea, ej = dd.get("ecart_annuel"), dd.get("ecart_jjas")
+        if ea is not None and ej is not None and ea == ea and ej == ej:
+            lignes.append(
+                f"Écart médian influencé/désinfluencé : {ea*100:.1f}% sur "
+                f"l'année, {ej*100:.1f}% en juin–septembre — un écart JJAS "
+                f"élevé signale une pression anthropique concentrée en "
+                f"période d'étiage, précisément la période qui compte ici.")
+        lignes.append("Comblement des trous du désinfluencé par l'influencé : "
+                      + ("appliqué." if dd.get("comble") else
+                         "non appliqué (écart trop marqué) — sa distribution "
+                         "PNDA reste partielle."))
     return dict(titre="Débits de référence thermique", verdict=verdict,
                 niveau=niveau, lignes=lignes)
 
@@ -450,7 +468,7 @@ def debit_retenu_prominent(res):
 # « non applicable ». C'est la condition pour empiler les stations les unes
 # sous les autres sans retraitement manuel.
 COLONNES_SYNTHESE = [
-    "Cours d'eau", "Localisation sonde", "Station hydrométrique",
+    "Cours d'eau", "Localisation sonde", "Station hydrométrique", "Station météo",
     "Contexte piscicole", "Espèce repère", "Début chronique", "Fin chronique",
     "Jours exploitables", "% jours écartés (QC)", "Mois couverts",
     "Couverture annuelle complète",
@@ -463,6 +481,8 @@ COLONNES_SYNTHESE = [
     "Cas matrice", "Diagnostic", "Conduite à tenir",
     "Q_thermie_bio (m³/s)", "PNDA désinf. bio (%)", "PNDA inf. bio (%)",
     "Q_thermie_fonc (m³/s)", "Base de calcul débit",
+    "Désinfluencé disponible", "Écart Q inf/désinf annuel (%)",
+    "Écart Q inf/désinf JJAS (%)", "Comblement désinfluencé appliqué",
     "Version outil",
 ]
 
@@ -475,6 +495,7 @@ def ligne_synthese(res):
     s, v, sg = res.sensibilite, res.vulnerabilite, res.sgvt
     fr, rel, m = res.fraie, res.relation_debit_temp, res.matrice
     ds = res.debits_sorties or {}
+    dd = res.diag_debit or {}
     bio = ds.get("q_thermie_bio") or {}
     fonc = ds.get("q_thermie_fonc") or {}
 
@@ -493,6 +514,7 @@ def ligne_synthese(res):
         "Cours d'eau": cfg.nom_cours_eau or "—",
         "Localisation sonde": getattr(cfg, "localisation_sonde", "") or "—",
         "Station hydrométrique": getattr(cfg, "nom_station_debit", "") or "—",
+        "Station météo": getattr(cfg, "nom_station_meteo", "") or "—",
         "Contexte piscicole": res.contexte["label"],
         "Espèce repère": res.contexte.get("espece", "—"),
         "Début chronique": f"{dt.min():%d/%m/%Y}" if dt is not None else NA,
@@ -533,6 +555,16 @@ def ligne_synthese(res):
         "PNDA inf. bio (%)": _f(bio.get("pnda_inf"), 1),
         "Q_thermie_fonc (m³/s)": _f(fonc.get("valeur")),
         "Base de calcul débit": ds.get("base_calcul", res.base_debit) or NA,
+        "Désinfluencé disponible": ("oui" if dd.get("desinfluence_disponible")
+                                    else ("non" if dd else NA)),
+        "Écart Q inf/désinf annuel (%)": (_f(dd["ecart_annuel"]*100, 1)
+                                          if dd.get("ecart_annuel") is not None
+                                          and dd["ecart_annuel"] == dd["ecart_annuel"] else NA),
+        "Écart Q inf/désinf JJAS (%)": (_f(dd["ecart_jjas"]*100, 1)
+                                        if dd.get("ecart_jjas") is not None
+                                        and dd["ecart_jjas"] == dd["ecart_jjas"] else NA),
+        "Comblement désinfluencé appliqué": ("oui" if dd.get("comble") else
+                                             ("non" if dd.get("desinfluence_disponible") else NA)),
         "Version outil": __version__,
     }
     # Garantit l'ordre et la complétude du schéma.

@@ -10,20 +10,18 @@ from typing import Optional
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
 # ============================================================
-__version__ = "4.1"
-VERSION_DATE = "2026-07-31"
+__version__ = "4.4"
+VERSION_DATE = "2026-08-03"
 VERSION_NOTES = (
-    "Rapport Word rendu générique (retrait des mentions HMUC et des renvois "
-    "à la note méthodologique, pour un usage sur d'autres contextes). Axe "
-    "des dates de la chronique et du QC désormais adaptatif (fini les "
-    "dizaines d'étiquettes chevauchées sur les chroniques pluriannuelles). "
-    "§1.5 : phrase d'intérêt de la normalisation (comparabilité inter-"
-    "stations et inter-années). Corrélations indicateurs scindées : les 2 "
-    "sans débit passent au §2.2, les 2 avec débit restent au §4.3. "
-    "Chapitre de synthèse : nouveau bloc « débit de référence retenu » en "
-    "ouverture (Q_thermie_bio prioritaire, repli explicite sur "
-    "Q_thermie_fonc sinon ; PNDA désinfluencé en premier, influencé en "
-    "second), repris dans la fiche station du classeur Excel."
+    "Revue de conformité de l'ensemble des demandes accumulées : les 40 "
+    "points vérifiés un à un dans le code livré sont conformes. Un défaut "
+    "latent corrigé au passage : au-delà de 10 années, deux années "
+    "prenaient silencieusement la même couleur sur les figures "
+    "fraie-croissance et vulnérabilité. La palette tab10 est conservée "
+    "(séparation visuelle nettement supérieure à une palette de 20 "
+    "teintes) mais la limite est désormais signalée explicitement sur la "
+    "figure, avec le détail des années concernées, au lieu de laisser "
+    "deux courbes se confondre sans avertissement."
 )
 
 
@@ -55,6 +53,7 @@ class SourcesConfig:
     nom_cours_eau:      str = "Cours d'eau"
     localisation_sonde: str = ""
     nom_station_debit:  str = ""
+    nom_station_meteo:  str = ""                 # station Météo-France de référence
     periode_normales:   str = "1991-2020"        # traçabilité (note §2.3)
 
 
