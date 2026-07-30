@@ -42,6 +42,7 @@ class Resultats:
     rapport_qc: Any = None
     diag_debit: dict = field(default_factory=dict)
     diag_normales: dict = field(default_factory=dict)
+    diag_air_station: dict = field(default_factory=dict)
     # résultats de calcul
     sensibilite: Any = None
     vulnerabilite: Any = None
@@ -99,7 +100,11 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
     else:
         df_air = io.charger_air_brut(config.sources.fichier_air,
                                      col_date=config.sources.air_col_date,
-                                     col_temp=config.sources.air_col_temp)
+                                     col_temp=config.sources.air_col_temp,
+                                     station_code=config.sources.air_station_code,
+                                     station_nom=config.sources.air_station_nom)
+        if df_air.attrs.get("station"):
+            res.diag_air_station = df_air.attrs["station"]
         ecart, normales, diag_norm = io.calculer_normales_ecarts(
             df_air, fenetre_lissage=config.normales_fenetre_lissage,
             min_annees=config.normales_min_annees, verbose=verbose)

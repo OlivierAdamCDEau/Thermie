@@ -209,6 +209,7 @@ with st.sidebar.expander("📅 Période affichée (optionnelle)"):
 # --- Mapping manuel colonnes / feuille Excel ---
 eau_cd = eau_ct = air_cd = air_ct = None
 eau_feuille = air_feuille = None
+air_station_code = None
 eau_ligne_ent = air_ligne_ent = None
 with st.sidebar.expander("🔧 Format & colonnes (CSV / Excel)"):
     st.caption("Auto-détection du séparateur, de l'encodage, de la feuille "
@@ -221,7 +222,8 @@ with st.sidebar.expander("🔧 Format & colonnes (CSV / Excel)"):
             _feuilles = lister_feuilles(up_eau.getvalue(), up_eau.name)
             if _feuilles:
                 eau_feuille = st.selectbox("Feuille Excel (sonde)", _feuilles, key="eauf")
-            _dfp, _meta = lire_brut(up_eau.getvalue(), nom=up_eau.name, feuille=eau_feuille)
+            _dfp, _meta = lire_brut(up_eau.getvalue(), nom=up_eau.name,
+                                    feuille=eau_feuille, n_lignes=200)
             fmt = _meta.get("format")
             info = (f"CSV — sép. {_meta.get('separateur')!r}, enc. {_meta.get('encodage')}"
                     if fmt == "csv" else f"Excel — feuille « {_meta.get('feuille')} »")
@@ -230,7 +232,8 @@ with st.sidebar.expander("🔧 Format & colonnes (CSV / Excel)"):
                                             int(_meta.get("ligne_entete", 0)), key="eaul")
             if eau_ligne_ent != _meta.get("ligne_entete"):
                 _dfp, _meta = lire_brut(up_eau.getvalue(), nom=up_eau.name,
-                                        feuille=eau_feuille, ligne_entete=eau_ligne_ent)
+                                        feuille=eau_feuille, ligne_entete=eau_ligne_ent,
+                                        n_lignes=200)
             _cd, _ct = deviner_colonnes(_dfp)
             cols = ["auto"] + list(_dfp.columns)
             s1 = st.selectbox("Colonne date", cols,
@@ -246,10 +249,32 @@ with st.sidebar.expander("🔧 Format & colonnes (CSV / Excel)"):
     if up_air is not None:
         try:
             st.markdown("**Air (référence)**")
+            # Export Météo-France multi-stations : proposer le choix de la
+            # station de référence (sinon la mieux couverte est prise par défaut).
+            from thermie_debits.io_data import stations_air
+            _air_path = _save_upload(up_air)
+            _stations = stations_air(_air_path)
+            if _stations:
+                def _lbl(s):
+                    alti = f", {s['alti']} m" if s.get("alti") is not None else ""
+                    return (f"{s['nom']} ({s['code']}{alti}) — "
+                            f"{s['n_tm']} j, {s['debut'][:4]}–{s['fin'][:4]}")
+                _idx = st.selectbox(
+                    "Station air (fichier multi-stations)",
+                    range(len(_stations)), format_func=lambda i: _lbl(_stations[i]),
+                    key="airstation",
+                    help="Le fichier contient plusieurs stations Météo-France. "
+                         "Choisir la station de référence : privilégier la "
+                         "proximité et une altitude comparable à la sonde, tout "
+                         "en assurant une couverture suffisante sur 1991–2020.")
+                air_station_code = _stations[_idx]["code"]
+                st.caption(f"Station retenue : {_stations[_idx]['nom']} "
+                           f"(code {air_station_code}).")
             _feuillesa = lister_feuilles(up_air.getvalue(), up_air.name)
             if _feuillesa:
                 air_feuille = st.selectbox("Feuille Excel (air)", _feuillesa, key="airf")
-            _dfa, _ma = lire_brut(up_air.getvalue(), nom=up_air.name, feuille=air_feuille)
+            _dfa, _ma = lire_brut(up_air.getvalue(), nom=up_air.name,
+                                  feuille=air_feuille, n_lignes=200)
             air_ligne_ent = int(_ma.get("ligne_entete", 0))
             colsa = ["auto"] + list(_dfa.columns)
             _adc = next((c for c in _dfa.columns if c.upper() == "AAAAMMJJ"), "auto")
@@ -296,6 +321,7 @@ if lancer:
         fichier_debit_desinf=_save_upload(up_deb_des) if (up_deb_des and mode == "thermie_debits") else None,
         eau_col_date=eau_cd, eau_col_temp=eau_ct,
         air_col_date=air_cd, air_col_temp=air_ct,
+        air_station_code=air_station_code,
         eau_nom_fichier=up_eau.name if up_eau else "",
         eau_feuille=eau_feuille, eau_ligne_entete=eau_ligne_ent,
         air_nom_fichier=up_air.name if up_air else "",

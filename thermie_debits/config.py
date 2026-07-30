@@ -43,6 +43,10 @@ class SourcesConfig:
     eau_col_temp:  Optional[str] = None
     air_col_date:  Optional[str] = None
     air_col_temp:  Optional[str] = None
+    # Sélection de station pour un export air multi-stations (Météo-France).
+    # None = station la mieux couverte (défaut). Renseigner l'un ou l'autre.
+    air_station_code: Optional[str] = None
+    air_station_nom:  Optional[str] = None
     # Excel / en-tête décalé (renseignés par l'app selon le fichier)
     eau_nom_fichier:  str = ""            # nom original (détection extension)
     eau_feuille:      Optional[str] = None

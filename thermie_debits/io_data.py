@@ -49,18 +49,23 @@ def charger_eau(fichier_eau, col_date=None, col_temp=None, nom="",
     df_w, _meta = lire_brut(fichier_eau, nom=nom, feuille=feuille,
                             ligne_entete=ligne_entete)
 
+    _dev_date, _dev_temp = deviner_colonnes(df_w)
     if col_temp is None:
-        _, col_temp = deviner_colonnes(df_w)
+        col_temp = _dev_temp
     if col_date is None:
+        # Priorité à une colonne « date » proprement dite (échantillon long,
+        # pour éviter de retenir une colonne d'heure seule), puis repli sur la
+        # proposition du sniff (qui gère les vocabulaires SANDRE type DtAnaTemp).
         cand = [c for c in df_w.columns
                 if any(m in c.lower() for m in
-                       ["date", "heure", "time", "timestamp", "horodat"])]
+                       ["date", "heure", "time", "timestamp", "horodat"])
+                or any(m in c.lower() for m in ["dtana", "dtprel"])]
         for dc in cand:
             samp = str(df_w[dc].dropna().iloc[0]) if len(df_w[dc].dropna()) else ""
-            if len(samp) > 8:
+            if len(samp) > 8 and not dc.lower().startswith(("heure", "hr")):
                 col_date = dc; break
-        if col_date is None and cand:
-            col_date = cand[0]
+        if col_date is None:
+            col_date = _dev_date or (cand[0] if cand else None)
 
     if col_date is None or col_temp is None:
         raise ValueError(
@@ -71,7 +76,10 @@ def charger_eau(fichier_eau, col_date=None, col_temp=None, nom="",
     dt = _parse_dates_sonde(df_w[col_date])
     # Colonne heure séparée : tout nom commençant par 'heure' (ex. 'Heure, GMT+02:00')
     col_h = next((c for c in df_w.columns
-                  if c.lower().startswith("heure") and c != col_date), None)
+                  if (c.lower().startswith("heure")
+                      or c.lower().startswith("hrana")
+                      or c.lower().startswith("hrprel"))
+                  and c != col_date), None)
     if col_h is not None and dt.notna().any() and (dt.dt.hour == 0).all():
         def _td(h):
             try:
@@ -293,7 +301,7 @@ def fusionner_debits(fichier_influence, fichier_desinfluence=None,
 # ============================================================
 # AIR — chargement brut flexible + calcul des normales/écarts
 # ============================================================
-from .sniff import lire_brut, deviner_colonnes
+from .sniff import lire_brut, deviner_colonnes, ENCODAGES
 
 REF_NORMALES = (1991, 2020)
 
@@ -313,13 +321,151 @@ def _parse_dates_air(serie):
     return best
 
 
-def charger_air_brut(source, col_date=None, col_temp=None):
+def _colonnes_meteo_france(source):
+    """
+    Détecte le format d'export quotidien Météo-France (en-tête à séparateur
+    « ; » contenant NUM_POSTE / NOM_USUEL / AAAAMMJJ / TM) et retourne son
+    séparateur et son encodage, ou None si ce n'est pas ce format. Ne lit que
+    la première ligne — coût négligeable même sur un fichier de 100 Mo.
+    """
+    if not isinstance(source, str):
+        return None
+    for enc in ENCODAGES:
+        try:
+            with open(source, "r", encoding=enc) as f:
+                first = f.readline()
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    else:
+        return None
+    up = first.upper()
+    if "NUM_POSTE" in up and "AAAAMMJJ" in up and ";" in first:
+        return {"sep": ";", "enc": enc}
+    return None
+
+
+def stations_air(source):
+    """
+    Pour un export Météo-France multi-stations, retourne la liste des stations
+    présentes sous forme de dicts {code, nom, n_tm, alti, debut, fin}, triés
+    par nombre de jours de T° moyenne renseignés (décroissant). Retourne une
+    liste vide si le fichier n'est pas de ce format ou ne contient qu'une
+    station. Lecture limitée aux 4 colonnes utiles → empreinte mémoire faible.
+    """
+    fmt = _colonnes_meteo_france(source) if isinstance(source, str) else None
+    if fmt is None:
+        return []
+    usecols = ["NUM_POSTE", "NOM_USUEL", "AAAAMMJJ", "TM", "ALTI"]
+    # Lecture par blocs pour ne jamais matérialiser tout le fichier en mémoire :
+    # on n'agrège que ce dont on a besoin (couverture TM, plage de dates, alti).
+    agg = {}
+    try:
+        reader = pd.read_csv(
+            source, sep=fmt["sep"], encoding=fmt["enc"],
+            usecols=lambda c: c in usecols,
+            dtype={"NUM_POSTE": "category", "NOM_USUEL": "category",
+                   "AAAAMMJJ": str},
+            chunksize=100_000)
+        for chunk in reader:
+            if "NUM_POSTE" not in chunk.columns:
+                return []
+            chunk["_tm"] = pd.to_numeric(chunk.get("TM"), errors="coerce")
+            for (code, nom), sub in chunk.groupby(
+                    ["NUM_POSTE", "NOM_USUEL"], observed=True):
+                a = agg.setdefault(
+                    (str(code), str(nom)),
+                    dict(n_tm=0, debut=None, fin=None, alti=None))
+                a["n_tm"] += int(sub["_tm"].notna().sum())
+                dmin, dmax = sub["AAAAMMJJ"].min(), sub["AAAAMMJJ"].max()
+                a["debut"] = dmin if a["debut"] is None else min(a["debut"], dmin)
+                a["fin"] = dmax if a["fin"] is None else max(a["fin"], dmax)
+                if a["alti"] is None and "ALTI" in sub:
+                    alt = sub["ALTI"].dropna()
+                    if alt.size:
+                        try:
+                            a["alti"] = int(float(alt.iloc[0]))
+                        except (ValueError, TypeError):
+                            pass
+    except Exception:
+        return []
+    out = [dict(code=c, nom=n, **v) for (c, n), v in agg.items()]
+    out.sort(key=lambda d: d["n_tm"], reverse=True)
+    return out if len(out) > 1 else []
+
+
+def charger_air_brut(source, col_date=None, col_temp=None,
+                     station_code=None, station_nom=None):
     """
     Charge un fichier air brut (T° journalières station de référence),
     couvrant potentiellement une plage large. Auto-détecte séparateur,
     encodage et colonnes (date, TM). Conserve RR si présent.
     Retourne un DataFrame [date, T_air, (RR)].
+
+    Cas Météo-France (export multi-stations, potentiellement très volumineux) :
+    la lecture est restreinte aux seules colonnes utiles via `usecols`, ce qui
+    évite de matérialiser en mémoire des dizaines de colonnes inutiles. Si le
+    fichier contient plusieurs stations, `station_code` (ou `station_nom`)
+    sélectionne celle à retenir ; sans sélection, la station la mieux couverte
+    (plus grand nombre de T° moyennes renseignées) est prise par défaut, et un
+    attribut `.attrs['station']` documente ce choix.
     """
+    fmt = _colonnes_meteo_france(source) if isinstance(source, str) else None
+
+    if fmt is not None:
+        # Détermination de la station à retenir (sans tout charger).
+        choix, choix_nom = None, None
+        if station_code is not None:
+            choix = str(station_code)
+        elif station_nom is not None:
+            choix_nom = str(station_nom)
+            # Résoudre le code correspondant, pour une traçabilité complète.
+            for s in stations_air(source):
+                if s["nom"] == choix_nom:
+                    choix = s["code"]; break
+        else:
+            sts = stations_air(source)          # [] si mono-station
+            if sts:
+                choix = sts[0]["code"]          # défaut : mieux couvert (CLI)
+
+        # Lecture par blocs, en ne conservant que la station retenue.
+        usecols = ["NUM_POSTE", "NOM_USUEL", "AAAAMMJJ", "TM", "RR"]
+        morceaux = []
+        nom_ret = None
+        reader = pd.read_csv(
+            source, sep=fmt["sep"], encoding=fmt["enc"],
+            usecols=lambda c: c in usecols,
+            dtype={"NUM_POSTE": str, "AAAAMMJJ": str},
+            chunksize=100_000)
+        for chunk in reader:
+            if choix is not None and "NUM_POSTE" in chunk.columns:
+                chunk = chunk[chunk["NUM_POSTE"] == choix]
+            elif choix_nom is not None and "NOM_USUEL" in chunk.columns:
+                chunk = chunk[chunk["NOM_USUEL"].astype(str) == choix_nom]
+            if chunk.empty:
+                continue
+            if nom_ret is None and "NOM_USUEL" in chunk.columns:
+                nn = chunk["NOM_USUEL"].dropna()
+                if nn.size:
+                    nom_ret = str(nn.iloc[0])
+            keep = [c for c in ["AAAAMMJJ", "TM", "RR"] if c in chunk.columns]
+            morceaux.append(chunk[keep])
+        df = (pd.concat(morceaux, ignore_index=True) if morceaux
+              else pd.DataFrame(columns=["AAAAMMJJ", "TM"]))
+
+        out = pd.DataFrame()
+        out["date"] = _parse_dates_air(df["AAAAMMJJ"]).dt.date
+        out["T_air"] = pd.to_numeric(
+            df["TM"].astype(str).str.replace(",", "."), errors="coerce")
+        if "RR" in df.columns:
+            out["RR"] = pd.to_numeric(
+                df["RR"].astype(str).str.replace(",", "."), errors="coerce")
+        out = out.dropna(subset=["date", "T_air"])
+        if choix is not None or choix_nom is not None:
+            out.attrs["station"] = {"code": choix or "", "nom": nom_ret or (choix_nom or "")}
+        return out
+
+    # ---- Cas générique (petit fichier, format quelconque) ----
     df, meta = lire_brut(source)
     if col_date is None:
         col_date = next((c for c in df.columns if c.upper() == "AAAAMMJJ"), None)

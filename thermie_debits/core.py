@@ -83,11 +83,29 @@ def fusionner(daily_eau_propre, df_air, ecart_by_date, normales_lkp,
                 La colonne Q y est déjà la base de calcul retenue.
     """
     df = daily_eau_propre.merge(df_air, on="date", how="inner")
+    if df.empty and len(daily_eau_propre) and len(df_air):
+        e0, e1 = daily_eau_propre["date"].min(), daily_eau_propre["date"].max()
+        a0, a1 = df_air["date"].min(), df_air["date"].max()
+        raise ValueError(
+            f"Aucun jour commun entre la sonde eau et la station air : ce "
+            f"n'est pas un effet du contrôle qualité, les deux chroniques ne "
+            f"se recouvrent pas dans le temps. Sonde eau : {e0} → {e1}. "
+            f"Station air : {a0} → {a1}. Vérifiez que la station météo "
+            f"choisie couvre bien la période de la sonde (fichier "
+            f"multi-stations : changez la station sélectionnée ; fichier "
+            f"mono-station : il faut une autre station ou une autre période "
+            f"de sonde).")
     df = df.merge(ecart_by_date, on="date", how="left")
     df["day"]   = pd.to_datetime(df["date"]).dt.day
     df["month"] = pd.to_datetime(df["date"]).dt.month
     df = df.merge(normales_lkp, on=["day", "month"], how="left")
     df = df.dropna(subset=["T_eau_moy", "T_air"])
+    if df.empty:
+        raise ValueError(
+            "Après fusion eau/air/normales, aucune ligne ne conserve à la "
+            "fois T_eau_moy et T_air valides. Recouvrement de dates trop "
+            "faible entre la sonde et la station air, ou lacunes concentrées "
+            "sur la période commune.")
     df["T_air_std"] = df["T_air"] - df["Delta_TMm"]
     df = df.sort_values("date").reset_index(drop=True)
     df["Tmh"]     = df["T_eau_moy"].rolling(window=7, min_periods=4,

@@ -20,9 +20,11 @@ ENCODAGES = ["utf-8-sig", "utf-8", "latin-1", "cp1252"]
 SEPARATEURS = [";", ",", "\t", "|"]
 
 MOTS_DATE = ["date", "heure", "time", "timestamp", "horodat", "jour", "aaaammjj",
-             "aaaa", "datetime", "cet", "cest", "gmt"]
+             "aaaa", "datetime", "cet", "cest", "gmt",
+             "dtanatemp", "dtprel", "dt_", "dtana", "hranatemp", "hrprel"]
 MOTS_TEMP = ["temp", "°c", "degr", "tw", "t_eau", "teau", "water", "eau",
-             "valeur", "value", "tm", "t (", "t(", ", °c", "temp,"]
+             "valeur", "value", "tm", "t (", "t(", ", °c", "temp,",
+             "rsanatemp", "rsana", "resultat", "résultat"]
 
 
 def _norm(s):
@@ -157,7 +159,13 @@ def lire_brut(source, nom="", n_lignes=None, feuille=None, ligne_entete=None):
     sep_ok = _detecter_separateur(lignes)
 
     # détection ligne d'en-tête pour CSV aussi (rare mais possible)
-    brut = pd.read_csv(io.StringIO(texte), sep=sep_ok, engine="python", header=None)
+    # Lecture bornée à la source quand n_lignes est fourni (aperçu) : évite de
+    # matérialiser en mémoire un fichier volumineux (ex. export Météo-France
+    # multi-stations de ~100 Mo) juste pour montrer 3 lignes. On lit un petit
+    # surplus pour absorber une éventuelle ligne d'en-tête décalée.
+    nrows = (n_lignes + 30) if n_lignes else None
+    brut = pd.read_csv(io.StringIO(texte), sep=sep_ok, engine="python",
+                       header=None, nrows=nrows)
     hdr = ligne_entete if ligne_entete is not None else _detecter_ligne_entete(brut)
     df = brut.iloc[hdr + 1:].copy()
     df.columns = [str(c).lstrip("\ufeff").strip() for c in brut.iloc[hdr].tolist()]
@@ -169,19 +177,34 @@ def lire_brut(source, nom="", n_lignes=None, feuille=None, ligne_entete=None):
 
 
 def deviner_colonnes(df, mots_valeur=MOTS_TEMP):
-    """Propose (col_date, col_valeur) par vocabulaire. None si non trouvé."""
+    """Propose (col_date, col_valeur) par vocabulaire. None si non trouvé.
+
+    Pour la valeur, on ne prend pas le premier nom qui matche le vocabulaire
+    (des libellés comme « CdStationMesureEauxSurface » contiennent « eau »
+    sans être des températures) : on classe les candidats par plausibilité
+    numérique, puis par cohérence physique (médiane dans une plage de
+    température crédible), et on retient le meilleur.
+    """
     cols = list(df.columns)
     col_date = next((c for c in cols
                      if any(m in _norm(c) for m in MOTS_DATE)), None)
     candidates = [c for c in cols
                   if any(m in _norm(c) for m in mots_valeur) and c != col_date]
-    col_val = None
-    for c in candidates:
+
+    def _score(c):
         serie = pd.to_numeric(
             df[c].astype(str).str.replace(",", ".").str.replace(" ", ""),
             errors="coerce")
-        if serie.notna().mean() > 0.5:
-            col_val = c; break
-    if col_val is None and candidates:
-        col_val = candidates[0]
+        frac = float(serie.notna().mean())
+        med = serie.median()
+        # bonus si la médiane tombe dans une plage de température crédible
+        plausible = 1 if (pd.notna(med) and -30 <= med <= 50) else 0
+        # malus pour les colonnes de code/identifiant (souvent de grands entiers)
+        idlike = 1 if (pd.notna(med) and abs(med) >= 1000) else 0
+        return (plausible, frac, -idlike)
+
+    col_val = None
+    if candidates:
+        ranked = sorted(candidates, key=_score, reverse=True)
+        col_val = ranked[0]
     return col_date, col_val
