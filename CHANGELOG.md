@@ -1,5 +1,40 @@
 # Journal des versions
 
+## 4.5 — 2026-07-30
+- **Zone intermédiaire : choix de l'espèce repère.** La zonation SANDRE
+  intermédiaire admet deux espèces repères thermiques ; l'ombre commun
+  (inchangé, retenu par défaut) et désormais le barbeau commun
+  (*Barbus barbus*). Le choix est explicite dans la barre latérale et tracé
+  jusque dans les livrables.
+- **Les seuils estivaux descendent au niveau espèce.** Les seuils de stress
+  chronique et de létalité, ainsi que le plancher de la classe « Faible »,
+  sont des propriétés de l'espèce repère et non de la zonation : ils sont
+  désormais portés par l'espèce et non plus par le contexte. Aucun
+  changement de valeur pour les trois espèces déjà en place.
+- **Barbeau — seuils retenus** (revue bibliographique dédiée) :
+  - stress chronique **24 °C** sur Tmh_norm — borne haute de l'optimum
+    adulte (Souchon & Tissot 2012, Table III) ;
+  - létalité **28 °C** sur Tmax_norm — IULT 24 h de 30 °C à 20 °C
+    d'acclimatation (Kraiem & Pattee 1980), minorée de la marge in situ
+    recommandée par les auteurs de la synthèse ;
+  - plancher de classe « Faible » **5 %** — le plancher à 3 % était fondé
+    sur la sensibilité des sténothermes froides, ce que le barbeau,
+    mésotherme, n'est pas ;
+  - reproduction en trois phases : pré-frai avr–mai (11–17 °C, élargie
+    9–20), ponte mai–juin (15–20 °C, élargie 14–25), incubation juin–juil
+    (15–20 °C, élargie 13–22), froid bloquant.
+  - Le seuil de déclenchement de 13,5 °C de Baras & Philippart (1999) est
+    établi sur la température **minimale journalière** ; l'indicateur
+    travaillant sur Tmh (moyenne mobile 7 j des moyennes journalières), il
+    est converti forfaitairement à ≈ 15 °C.
+- **Un seul plancher pour deux usages.** Le plancher de classe pilote
+  désormais aussi la cible du volet stress de Q_thermie_bio : la classe
+  affichée et le débit recherché ne peuvent plus diverger.
+- **Défaut latent corrigé** : la colonne « Espèce repère » du schéma fixe de
+  la feuille de synthèse lisait une clé inexistante et renvoyait
+  systématiquement « — ». Elle est désormais renseignée. Le schéma reste
+  invariant (aucune colonne ajoutée ou retirée).
+
 ## 4.4 — 2026-08-03
 - **Revue de conformité** de l'ensemble des demandes accumulées depuis le
   début du chantier de mise en forme : 40 points vérifiés un à un dans le

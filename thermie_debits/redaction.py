@@ -516,7 +516,7 @@ def ligne_synthese(res):
         "Station hydrométrique": getattr(cfg, "nom_station_debit", "") or "—",
         "Station météo": getattr(cfg, "nom_station_meteo", "") or "—",
         "Contexte piscicole": res.contexte["label"],
-        "Espèce repère": res.contexte.get("espece", "—"),
+        "Espèce repère": res.contexte.get("espece_repere", "—"),
         "Début chronique": f"{dt.min():%d/%m/%Y}" if dt is not None else NA,
         "Fin chronique": f"{dt.max():%d/%m/%Y}" if dt is not None else NA,
         "Jours exploitables": len(d) if d is not None else 0,

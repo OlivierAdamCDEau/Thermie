@@ -70,6 +70,10 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
     out = config.output_dir
     if out:
         Path(out).mkdir(parents=True, exist_ok=True)
+        # Les chemins de sortie sont construits par concaténation : on garantit
+        # le séparateur final, sinon un output_dir sans "/" préfixe les noms de
+        # fichiers au lieu de les ranger dans le dossier.
+        out = str(Path(out)) + "/"
     nom = config.sources.nom_cours_eau
     res = Resultats(config=config, contexte=ctx)
 

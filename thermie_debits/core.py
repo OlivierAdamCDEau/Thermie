@@ -44,9 +44,17 @@ def interprete_sensibilite(slope):
     if slope < 0.8:  return "Sensibilité Forte"
     return "Sensibilité Critique"
 
-def cat_chronique(pct, contexte_key="cyprinicole"):
-    """Grille note §2.5 : seuil 'Faible' = 3% (salmo/interm.), 5% (cyprin.)."""
-    seuil_faible = 3 if contexte_key in ("salmonicole", "intermediaire") else 5
+def cat_chronique(pct, contexte_key="cyprinicole", plancher_faible=None):
+    """
+    Grille note §2.5. Le plancher de la classe « Faible » est une propriété de
+    l'espèce repère (3 % pour les sténothermes froides, 5 % pour les
+    mésothermes et les espèces d'eaux chaudes) : il est lu dans le contexte
+    résolu. Le repli sur la clé de contexte ne sert qu'aux appels historiques.
+    """
+    if plancher_faible is not None:
+        seuil_faible = float(plancher_faible)
+    else:
+        seuil_faible = 3 if contexte_key in ("salmonicole", "intermediaire") else 5
     if pct < seuil_faible: return "Faible vulnérabilité chronique"
     if pct < 20:  return "Vulnérabilité chronique modérée"
     if pct < 50:  return "Forte vulnérabilité chronique"
@@ -152,13 +160,17 @@ def analyse_vulnerabilite(df, m, contexte, contexte_key="cyprinicole"):
     df["Tmax_norm"] = df["T_eau_max"] - (m * _delta)
     df_ete = df[df["month"].isin([6, 7, 8, 9])].copy()
     s_chr, s_aig = contexte["seuil_chr"], contexte["seuil_aigu"]
+    plancher = contexte.get("plancher_faible")
     tmh_v  = df_ete.dropna(subset=["Tmh_norm"])
     tmax_v = df_ete.dropna(subset=["Tmax_norm"])
     n_tmh, n_tmax = len(tmh_v), len(tmax_v)
     pct_chr = 100 * (tmh_v["Tmh_norm"] > s_chr).sum() / n_tmh if n_tmh else 0
     n_aigu  = int((tmax_v["Tmax_norm"] > s_aig).sum())
     return dict(df_ete=df_ete, seuil_chr=s_chr, seuil_aigu=s_aig,
-                pct_chr=pct_chr, cat_chr=cat_chronique(pct_chr, contexte_key),
+                espece_repere=contexte.get("espece_repere"),
+                plancher_faible=plancher,
+                pct_chr=pct_chr,
+                cat_chr=cat_chronique(pct_chr, contexte_key, plancher),
                 n_aigu=n_aigu, cat_aigu=cat_aigue(n_aigu),
                 n_total_tmh=n_tmh, n_total_tmax=n_tmax)
 
@@ -282,7 +294,12 @@ def analyse_fraie_croissance(df, m_estival, contexte, contexte_key="cyprinicole"
     phase ; le détail par phase est conservé pour l'interprétation.
 
     Zone cyprinicole : deux sous-indicateurs (brochet + brème), le plus
-    contraignant alimente P_fraie ; les deux sont affichés.
+    contraignant alimente P_fraie ; les deux sont affichés — c'est une lecture
+    croisée, pas un arbitrage.
+
+    Zone intermédiaire : à l'inverse, le contexte résolu ne contient que
+    l'espèce repère retenue (ombre commun ou barbeau) — c'est un arbitrage,
+    les deux espèces ne sont jamais évaluées simultanément.
 
     Retourne un dict (P_fraie, sous_indicateurs, espece_limitante…) ou None.
     """
@@ -567,7 +584,13 @@ def analyse_debits_inflexion(df, sens_res, contexte, contexte_key="cyprinicole",
             m_roll.append(sl); q_roll.append(sub["Q"].median())
 
     # Q*_vuln — seuil de vulnérabilité directe (base Q_thermie_bio)
-    SEUIL_VULN_PCT = 3.0 if contexte_key in ("salmonicole", "intermediaire") else 5.0
+    # Cible du volet stress : le plancher de la classe « Faible » de l'espèce
+    # repère (même valeur que la grille de vulnérabilité chronique, pour que la
+    # classe affichée et le débit recherché ne puissent pas diverger).
+    _pf = contexte.get("plancher_faible")
+    SEUIL_VULN_PCT = (float(_pf) if _pf is not None
+                      else (3.0 if contexte_key in ("salmonicole", "intermediaire")
+                            else 5.0))
     n_min_vuln = max(10, int(len(df_ete) * 0.10))
     tmh_col  = "Tmh_norm"  if "Tmh_norm"  in df_ete.columns else "Tmh"
     tmax_col = "Tmax_norm" if "Tmax_norm" in df_ete.columns else "T_eau_max"

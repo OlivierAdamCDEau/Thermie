@@ -13,7 +13,10 @@ CONFIG = AnalyseConfig(
         nom_cours_eau = "Cours d'eau", localisation_sonde = "Localisation",
         nom_station_debit = "Station hydrométrique",
         nom_station_meteo = "Station météo"),
-    qc=QCConfig(), contexte_piscicole="intermediaire", mode="thermie_debits",
+    qc=QCConfig(), contexte_piscicole="intermediaire",
+    # Zone intermédiaire : "ombre commun" (défaut) ou "barbeau".
+    espece_repere=None,
+    mode="thermie_debits",
     faire_volet_climatique=True, seuil_comblement_desinf=0.10,
     normales_fenetre_lissage=10, normales_min_annees=20,
     normalisation_lissage_delta=7,

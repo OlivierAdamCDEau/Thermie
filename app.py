@@ -13,7 +13,8 @@ import pandas as pd
 import streamlit as st
 
 from thermie_debits.config import (AnalyseConfig, SourcesConfig, QCConfig,
-                                    CONTEXTES, __version__, VERSION_DATE,
+                                    CONTEXTES, especes_disponibles,
+                                    __version__, VERSION_DATE,
                                     VERSION_NOTES)
 from thermie_debits.orchestrator import run
 from thermie_debits import figures as figmod
@@ -69,6 +70,28 @@ st.sidebar.header("2. Contexte & mode")
 contexte_key = st.sidebar.selectbox(
     "Contexte piscicole", options=list(CONTEXTES.keys()),
     format_func=lambda k: CONTEXTES[k]["label"], index=1)
+
+# --- Espèce repère : arbitrage explicite là où plusieurs espèces sont
+# admissibles pour une même zonation SANDRE (zone intermédiaire).
+_especes = especes_disponibles(contexte_key)
+if len(_especes) > 1:
+    espece_repere = st.sidebar.radio(
+        "Espèce repère", options=_especes, index=0,
+        help="La zonation SANDRE intermédiaire admet deux espèces repères "
+             "thermiques. Le choix détermine les seuils estivaux, le plancher "
+             "de classe et la fenêtre de reproduction — il change donc les "
+             "résultats. Défaut : ombre commun.")
+else:
+    espece_repere = None
+
+_p = CONTEXTES[contexte_key].get("especes", {}).get(espece_repere) \
+     if espece_repere else CONTEXTES[contexte_key]
+st.sidebar.caption(
+    f"Seuils retenus — stress {_p['seuil_chr']:.0f} °C (Tmh_norm) · "
+    f"létalité {_p['seuil_aigu']:.0f} °C (Tmax_norm) · "
+    f"plancher classe « Faible » {_p['plancher_faible']:.0f} %")
+if _p.get("src_seuils"):
+    st.sidebar.caption(f"Sources : {_p['src_seuils']}")
 mode = st.sidebar.radio(
     "Mode d'analyse", options=["thermie_seule", "thermie_debits"],
     format_func=lambda m: {"thermie_seule": "Thermie seule (SGVT, sans débit)",
@@ -148,7 +171,10 @@ with st.sidebar.expander("⚙️ Contrôle qualité (avancé)"):
 with st.sidebar.expander("🐟 Paramètres de reproduction (lecture)"):
     _MOIS = {1: "janv", 2: "févr", 3: "mars", 4: "avr", 5: "mai", 6: "juin",
              7: "juil", 8: "août", 9: "sept", 10: "oct", 11: "nov", 12: "déc"}
-    for esp, pr in CONTEXTES[contexte_key].get("fraie", {}).items():
+    _fraie_lue = CONTEXTES[contexte_key].get("fraie", {})
+    if espece_repere:                     # arbitrage : une seule espèce lue
+        _fraie_lue = {espece_repere: _fraie_lue[espece_repere]}
+    for esp, pr in _fraie_lue.items():
         froid = "bloquant" if pr.get("froid_bloquant") else "ralentissant"
         st.markdown(f"**{esp}** · froid {froid}")
         for ph in pr.get("phases", []):
@@ -277,6 +303,7 @@ if lancer:
         nom_cours_eau=nom_ce, localisation_sonde=loc_sonde,
         nom_station_debit=nom_station, nom_station_meteo=nom_station_meteo)
     cfg = AnalyseConfig(sources=src, qc=qc, contexte_piscicole=contexte_key,
+                        espece_repere=espece_repere,
                         mode=mode, faire_volet_climatique=faire_clim,
                         seuil_comblement_desinf=seuil_comblement,
                         normales_fenetre_lissage=norm_fenetre,
@@ -307,7 +334,12 @@ sg = res.sgvt
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("SGVT", f"{sg['sgvt']:.2f} / 10", sg["interp"])
 c2.metric("Composantes SGVT", f"{sg['composantes']}")
-c3.metric("Contexte", res.config.contexte_piscicole)
+c3.metric("Contexte", res.config.contexte_piscicole,
+          ctx.get("espece_repere", ""),
+          help=f"Espèce repère retenue : {ctx.get('espece_repere', '—')} — "
+               f"stress {ctx['seuil_chr']:.0f} °C, létalité "
+               f"{ctx['seuil_aigu']:.0f} °C, plancher classe « Faible » "
+               f"{ctx.get('plancher_faible', 5):.0f} %")
 dd = res.diag_debit or {}
 if dd.get("desinfluence_disponible") and dd.get("ecart_jjas") == dd.get("ecart_jjas"):
     c4.metric("Écart inf./désinf. (JJAS)", f"{dd['ecart_jjas']*100:.0f} %",

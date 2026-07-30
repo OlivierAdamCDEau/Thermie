@@ -22,12 +22,35 @@ les effets de seuil. Ces corrélations sont la **source unique** du projet : le
 verrou du volet stress consomme exactement les mêmes valeurs, ce qui rend toute
 contradiction d'affichage impossible.
 
+## Espèce repère — un arbitrage en zone intermédiaire
+
+Les seuils estivaux et le plancher de la classe « Faible » sont des propriétés
+de **l'espèce repère**, non de la zonation. La zone intermédiaire SANDRE admet
+deux espèces repères thermiques ; le choix se fait dans la barre latérale et
+change les résultats.
+
+| Zone | Espèce repère | Stress (Tmh_norm) | Létalité (Tmax_norm) | Plancher « Faible » |
+|---|---|---|---|---|
+| Salmonicole | Truite fario | > 18 °C | > 24 °C | 3 % |
+| Intermédiaire | Ombre commun *(défaut)* | > 18 °C | > 23 °C | 3 % |
+| Intermédiaire | Barbeau commun | > 24 °C | > 28 °C | 5 % |
+| Cyprinicole | Brème commune | > 26 °C | > 30 °C | 5 % |
+
+Le plancher de classe sert aussi de cible à la recherche du volet stress de
+Q_thermie_bio : une seule valeur, deux usages, aucune divergence possible.
+
+Retenir le barbeau n'assouplit pas l'analyse dans tous les compartiments : les
+seuils estivaux sont plus élevés, mais la fenêtre de reproduction est plus
+exigeante **côté froid** (ponte suspendue sous ≈ 15 °C en Tmh), ce qui peut
+dégrader la composante fraie-croissance sur un cours d'eau frais.
+
 ## Fraie-croissance — trois phases, trois tolérances
 
 | Espèce | Pré-frai | Ponte ★ | Incubation ★ |
 |---|---|---|---|
 | **Truite fario** | oct–nov · 1–10 °C | nov–janv · 4–8 °C | déc–mars · 4–8 °C |
 | **Ombre commun** | mars · 5–9 °C | mars–avr · 7–10 °C | avr–mai · 6–10 °C |
+| **Barbeau** | avr–mai · 11–17 °C | mai–juin · 15–20 °C | juin–juil · 15–20 °C |
 | **Brochet** | févr · 4–7 °C | févr–mars · 7–11 °C | mars–avr · 8–12 °C |
 | **Brème** | avr–mai · 12–16 °C | mai–juin · 15–20 °C | juin–juil · 16–21 °C |
 

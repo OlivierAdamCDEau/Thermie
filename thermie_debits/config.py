@@ -10,18 +10,19 @@ from typing import Optional
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
 # ============================================================
-__version__ = "4.4"
-VERSION_DATE = "2026-08-03"
+__version__ = "4.5"
+VERSION_DATE = "2026-07-30"
 VERSION_NOTES = (
-    "Revue de conformité de l'ensemble des demandes accumulées : les 40 "
-    "points vérifiés un à un dans le code livré sont conformes. Un défaut "
-    "latent corrigé au passage : au-delà de 10 années, deux années "
-    "prenaient silencieusement la même couleur sur les figures "
-    "fraie-croissance et vulnérabilité. La palette tab10 est conservée "
-    "(séparation visuelle nettement supérieure à une palette de 20 "
-    "teintes) mais la limite est désormais signalée explicitement sur la "
-    "figure, avec le détail des années concernées, au lieu de laisser "
-    "deux courbes se confondre sans avertissement."
+    "Zone intermédiaire : choix explicite de l'espèce repère entre l'ombre "
+    "commun (défaut, inchangé) et le barbeau commun (Barbus barbus). Les "
+    "seuils estivaux de stress et de létalité, ainsi que le plancher de la "
+    "classe « Faible », descendent du niveau contexte au niveau espèce — ils "
+    "sont en effet propres à l'espèce et non à la zonation. Barbeau : stress "
+    "24 °C, létalité 28 °C, plancher 5 % (mésotherme, le plancher à 3 % était "
+    "justifié par la sensibilité des sténothermes froides). Le même plancher "
+    "pilote la classe de vulnérabilité chronique ET le seuil de recherche du "
+    "volet stress de Q_thermie_bio : les deux sont désormais lus au même "
+    "endroit, ce qui supprime le risque de les voir diverger."
 )
 
 
@@ -182,6 +183,35 @@ FRAIE_PARAMS = {
                      note="180–220 °C·j ; malformations au-delà de 12 °C, "
                           "létalité > 14 °C"),
             ]),
+        "barbeau": dict(
+            froid_bloquant=True,
+            src=("Baras & Philippart 1999 ; Souchon & Tissot 2012 (Table III) ; "
+                 "Ługowska 2018 ; Krupka 1988 ; Penáz 1973 ; "
+                 "Nowosad et al. 2016 ; Hancock et al. 1976"),
+            phases=[
+                dict(cle="prefrai", nom="Pré-frai / maturation-montaison",
+                     mois=[4, 5], mois_central=5, critique=False,
+                     opt=[11.0, 17.0], elargie=[9.0, 20.0],
+                     note="maturation finale sous régime thermique croissant "
+                          "(~750 °C·j sur ~58 j — Nowosad et al. 2016) ; "
+                          "montaison et regroupement sur radiers"),
+                dict(cle="ponte", nom="Ponte / fécondation",
+                     mois=[5, 6], mois_central=6, critique=True,
+                     opt=[15.0, 20.0], elargie=[14.0, 25.0],
+                     note="déclenchement au franchissement de 13,5 °C en T° "
+                          "minimale journalière (Baras & Philippart 1999), "
+                          "soit ≈ 15 °C exprimé en Tmh ; ponte suspendue dès "
+                          "redescente sous le seuil ; pondeur fractionné "
+                          "jusqu'en juillet (borne haute élargie 25 °C, "
+                          "Banarescu et al. 2003)"),
+                dict(cle="incubation", nom="Incubation / émergence",
+                     mois=[6, 7], mois_central=6, critique=True,
+                     opt=[15.0, 20.0], elargie=[13.0, 22.0],
+                     note="3,7 j à 20,2 °C à 8 j à 16 °C (Krupka 1988 ; "
+                          "Penáz 1973) ; proportion maximale de larves viables "
+                          "à 14 et 18 °C, mortalités et malformations "
+                          "maximales à 12 et 22 °C (Ługowska 2018)"),
+            ]),
     },
     "cyprinicole": {
         "brochet": dict(
@@ -227,23 +257,67 @@ FRAIE_PARAMS = {
 }
 
 
+# Les seuils estivaux (stress chronique sur Tmh_norm, létalité sur Tmax_norm)
+# et le plancher de la classe « Faible » sont des propriétés de L'ESPÈCE
+# REPÈRE, non de la zonation : ils sont donc portés par l'espèce. Un contexte
+# qui propose un choix d'espèces expose un sous-dictionnaire `especes` et une
+# `espece_defaut` ; les autres portent leurs seuils directement.
+#
+# `plancher_faible` : % de jours estivaux stressés sous lequel la vulnérabilité
+# chronique est classée « Faible ». 3 % pour les sténothermes froides (≈ 4 jours
+# de stress suffisent à basculer en classe modérée), 5 % pour les mésothermes et
+# les espèces d'eaux chaudes. Ce même plancher sert de cible à la recherche du
+# volet stress de Q_thermie_bio (note §2.7.1) : une seule valeur pour les deux.
 CONTEXTES = {
     "salmonicole": {
-        "label":     "Salmonicole (truite fario — espèce repère DCE)",
-        "seuil_chr": 18, "seuil_aigu": 24,
-        "fraie":     FRAIE_PARAMS["salmonicole"],
+        "label":          "Salmonicole (truite fario — espèce repère DCE)",
+        "espece_repere":  "truite fario",
+        "seuil_chr": 18, "seuil_aigu": 24, "plancher_faible": 3.0,
+        "src_seuils":     "Elliott 1981, 1991 ; OFB/INRAE",
+        "fraie":          FRAIE_PARAMS["salmonicole"],
     },
     "intermediaire": {
-        "label":     "Intermédiaire (ombre commun — espèce repère thermique)",
-        "seuil_chr": 18, "seuil_aigu": 23,
-        "fraie":     FRAIE_PARAMS["intermediaire"],
+        "label":          "Intermédiaire",
+        "espece_defaut":  "ombre commun",
+        "especes": {
+            "ombre commun": dict(
+                label="Intermédiaire (ombre commun — espèce repère thermique)",
+                seuil_chr=18, seuil_aigu=23, plancher_faible=3.0,
+                src_seuils=("Elliott & Elliott 2010 ; Crisp 1996 ; "
+                            "OFEV 2009 ; Bremset & Berg 1999")),
+            "barbeau": dict(
+                label="Intermédiaire (barbeau commun — espèce repère thermique)",
+                seuil_chr=24, seuil_aigu=28, plancher_faible=5.0,
+                src_seuils=("Souchon & Tissot 2012 (Table III : optimum adulte "
+                            "10–24 °C) ; Kraiem & Pattee 1980 (IULT 24 h 30 °C "
+                            "à 20 °C d'acclimatation, CTmax 31,5 °C, minorée de "
+                            "la marge in situ recommandée) ; "
+                            "Baras & Philippart 1999")),
+        },
+        "fraie":          FRAIE_PARAMS["intermediaire"],
     },
     "cyprinicole": {
-        "label":     "Cyprinicole (brème commune — espèce repère DCE)",
-        "seuil_chr": 26, "seuil_aigu": 30,
-        "fraie":     FRAIE_PARAMS["cyprinicole"],
+        "label":          "Cyprinicole (brème commune — espèce repère DCE)",
+        "espece_repere":  "brème",
+        "seuil_chr": 26, "seuil_aigu": 30, "plancher_faible": 5.0,
+        "src_seuils":     "OFB ; ICES 2003 ; Beitinger et al. 2000",
+        "fraie":          FRAIE_PARAMS["cyprinicole"],
     },
 }
+
+
+def especes_disponibles(contexte_key: str) -> list:
+    """
+    Espèces repères sélectionnables pour un contexte, la première étant celle
+    retenue par défaut. Destiné à alimenter le sélecteur de l'app : une liste
+    d'un seul élément signifie qu'il n'y a pas d'arbitrage à proposer.
+    """
+    base = CONTEXTES.get(contexte_key, {})
+    if "especes" not in base:
+        return [base.get("espece_repere", contexte_key)]
+    defaut = base.get("espece_defaut")
+    autres = [e for e in base["especes"] if e != defaut]
+    return ([defaut] if defaut else []) + autres
 
 
 # ============================================================
@@ -297,6 +371,10 @@ class AnalyseConfig:
     sources: SourcesConfig = field(default_factory=SourcesConfig)
     qc:      QCConfig = field(default_factory=QCConfig)
     contexte_piscicole: str = "intermediaire"    # clé de CONTEXTES
+    # Espèce repère retenue au sein du contexte. None = espèce par défaut
+    # (ombre commun en intermédiaire). Seule la zone intermédiaire offre
+    # aujourd'hui un choix (ombre commun / barbeau).
+    espece_repere: Optional[str] = None
     # Mode : "thermie_seule" (pas de débit) ou "thermie_debits"
     mode: str = "thermie_debits"
     faire_volet_climatique: bool = False
@@ -321,11 +399,39 @@ class AnalyseConfig:
     periode_affichage: Optional[tuple] = None
 
     def contexte(self) -> dict:
+        """
+        Contexte piscicole RÉSOLU pour l'espèce repère retenue : label, seuils
+        estivaux, plancher de classe et paramètres de fraie de cette seule
+        espèce. Les modules avals (core, figures, exports, livrables) ne voient
+        donc jamais qu'un contexte mono-espèce en intermédiaire — la zone
+        cyprinicole conserve ses deux sous-indicateurs de fraie (brochet +
+        brème), qui ne relèvent pas d'un arbitrage mais d'une lecture croisée.
+        """
         if self.contexte_piscicole not in CONTEXTES:
             raise ValueError(
                 f"Contexte inconnu : '{self.contexte_piscicole}'. "
                 f"Possibles : {list(CONTEXTES.keys())}")
-        return CONTEXTES[self.contexte_piscicole]
+        base = CONTEXTES[self.contexte_piscicole]
+
+        if "especes" not in base:
+            ctx = {k: v for k, v in base.items() if k != "espece_defaut"}
+            return ctx
+
+        espece = self.espece_repere or base["espece_defaut"]
+        if espece not in base["especes"]:
+            raise ValueError(
+                f"Espèce repère inconnue pour le contexte "
+                f"'{self.contexte_piscicole}' : '{espece}'. "
+                f"Possibles : {list(base['especes'].keys())}")
+
+        ctx = {k: v for k, v in base.items()
+               if k not in ("especes", "espece_defaut")}
+        ctx.update(base["especes"][espece])       # label + seuils + plancher
+        ctx["espece_repere"] = espece
+        # La composante fraie est restreinte à l'espèce retenue : c'est un
+        # arbitrage, pas une lecture croisée.
+        ctx["fraie"] = {espece: base["fraie"][espece]}
+        return ctx
 
     @property
     def avec_debits(self) -> bool:
