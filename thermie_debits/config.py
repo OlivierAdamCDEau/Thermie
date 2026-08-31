@@ -3,26 +3,57 @@ config.py — Paramètres de l'analyse thermie & débits (package thermie_debits
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 
 # ============================================================
 # VERSION — permet de vérifier d'un coup d'œil quelle version
 # est réellement déployée (affichée dans l'app et les exports).
+#
+# UNE SEULE SOURCE. Le numéro est celui de VERSION.txt, à la
+# racine de l'application, lu au chargement du module. La
+# constante ci-dessous n'est plus la vérité : c'est le REPLI,
+# utilisé si le fichier n'est pas embarqué par un déploiement.
+# Un déploiement sans VERSION.txt doit démarrer quand même.
+#
+# Le doublon corrigé ici est celui du correctif 7, appliqué au
+# fichier de configuration lui-même : la valeur littérale avait
+# divergé de la valeur documentée, et le message d'accueil
+# orientait vers le déploiement pour un défaut qui était ici.
 # ============================================================
-__version__ = "4.5"
-VERSION_DATE = "2026-07-30"
+__version__ = "4.6"
+VERSION_DATE = "2026-08-31"
+
+_FICHIER_VERSION = Path(__file__).resolve().parent.parent / "VERSION.txt"
+try:
+    _lignes_version = _FICHIER_VERSION.read_text(encoding="utf-8").splitlines()
+except (OSError, ValueError):
+    _lignes_version = []           # absent ou illisible : le repli s'applique
+if _lignes_version and _lignes_version[0].strip():
+    __version__ = _lignes_version[0].strip()
+
 VERSION_NOTES = (
-    "Zone intermédiaire : choix explicite de l'espèce repère entre l'ombre "
-    "commun (défaut, inchangé) et le barbeau commun (Barbus barbus). Les "
-    "seuils estivaux de stress et de létalité, ainsi que le plancher de la "
-    "classe « Faible », descendent du niveau contexte au niveau espèce — ils "
-    "sont en effet propres à l'espèce et non à la zonation. Barbeau : stress "
-    "24 °C, létalité 28 °C, plancher 5 % (mésotherme, le plancher à 3 % était "
-    "justifié par la sensibilité des sténothermes froides). Le même plancher "
-    "pilote la classe de vulnérabilité chronique ET le seuil de recherche du "
-    "volet stress de Q_thermie_bio : les deux sont désormais lus au même "
-    "endroit, ce qui supprime le risque de les voir diverger."
+    "Treize correctifs de la chaîne allant de la lecture des fichiers à la "
+    "température normalisée. La détection des sondes hors de l'eau ne repose "
+    "plus sur un écart fixe de 4 °C entre l'eau et l'air, mais sur la "
+    "comparaison de chaque station à sa propre habitude au même mois, sur "
+    "l'année entière et non plus le seul été. Quand la relation air-eau ne "
+    "peut pas être établie, la correction climatique n'est pas appliquée et "
+    "le statut le dit, dans le rapport comme dans le classeur, avant les "
+    "chiffres qu'il qualifie. Les quatre étapes qui écartaient des données "
+    "sans laisser de trace publient désormais un tableau daté et motivé ; les "
+    "journées incomplètes sont signalées sans être exclues. Les moyennes "
+    "glissantes comptent des jours de calendrier et non des lignes, et les "
+    "lissages portent sur la série complète avant d'être restreints. La "
+    "normale de l'air se calcule sur le couple (mois, jour), insensible aux "
+    "années bissextiles ; les températures minimale et maximale de l'air ne "
+    "sont plus jetées à la lecture. Une famille d'indicateurs redondants est "
+    "retirée — le tableau mensuel passe de onze à huit colonnes. Les valeurs "
+    "par défaut de l'interface dérivent d'une source unique, et chaque "
+    "contrôle publie son état dans un onglet dédié, y compris quand il n'a "
+    "rien trouvé. Deux stations sur trente-deux ont changé de catégorie ; "
+    "partout ailleurs les catégories publiées sont inchangées."
 )
 
 
