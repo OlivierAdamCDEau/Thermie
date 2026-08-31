@@ -1,12 +1,23 @@
 """
-indicateurs.py — Indicateurs thermiques bruts et compensés (package thermie_debits).
+indicateurs.py — Indicateurs thermiques bruts (package thermie_debits).
 
 Calcule, par mois et à l'année :
   - Tmax et Tmin (avec date/heure d'occurrence) ;
   - amplitude nycthémérale (écart Tmax-Tmin journalier) : moyenne + écart-type ;
   - Tmm30j : température moyenne maximale sur 30 jours consécutifs (année civile).
 
-Versions BRUTE (T° observée) et COMPENSÉE (écart aux normales, via Delta_TMm).
+CORRECTIF 4 (D18), VOIE B — la famille « compensation » a été RETIRÉE.
+Ce module produisait trois séries journalières `T - Delta_TMm` : anomalie
+BRUTE, aucun coefficient. La chaîne applique par ailleurs une convention
+unique, `T - m x Delta_TMm_liss` — anomalie lissée, coefficient estimé —, et
+le même mot « compensé » servait à désigner les deux. Ce module ne publie plus
+que des indicateurs BRUTS ; les températures corrigées sont celles de
+`core.py`, et elles s'appellent normalisées.
+
+Ce qui disparaît avec elles, et qui n'a d'équivalent nulle part : la
+couverture de janvier à décembre (la normalisation n'agrège que juin-septembre
+et les fenêtres de reproduction), le minimum corrigé, et la moyenne mobile de
+trente jours corrigée. Le journal des verdicts le consigne.
 
 Fournit aussi les données des 4 corrélations linéaires (amplitude/débit,
 amplitude/Teau, écart Teau-Tair/débit, écart Teau-Tair/Teau) avec R².
@@ -57,7 +68,7 @@ def _tmm30j(serie_journaliere):
 
 def calcul_indicateurs(df, sub, verbose=False):
     """
-    Calcule les indicateurs bruts et compensés par mois et à l'année.
+    Calcule les indicateurs bruts par mois et à l'année.
 
     df  : DataFrame journalier fusionné (avec T_eau_moy/max/min, Delta_TMm,
           date_dt, month ; éventuellement Q, T_air).
@@ -82,12 +93,15 @@ def calcul_indicateurs(df, sub, verbose=False):
     else:
         d["ampl"] = np.nan
 
-    # compensation : T compensée = T - Delta_TMm (ramenée à conditions normales)
+    # CORRECTIF 4, VOIE B — les trois séries `T - Delta_TMm` sont retirées.
+    #
+    # `has_delta` RESTE, et ce n'est pas un oubli : il a un second
+    # consommateur, plus bas, qui conditionne le calcul de `ecart_eau_air` et
+    # donc DEUX des quatre corrélations. Cette grandeur ne lit pas
+    # `Delta_TMm` — mais sa condition de calcul, si. Retirer la variable avec
+    # la famille aurait fait apparaître deux corrélations sur tout point ayant
+    # un `T_air` sans `Delta_TMm`, sans que rien ne le signale.
     has_delta = "Delta_TMm" in d.columns
-    if has_delta:
-        d["T_moy_comp"] = d["T_eau_moy"] - d["Delta_TMm"]
-        d["T_max_comp"] = d["T_eau_max"] - d["Delta_TMm"]
-        d["T_min_comp"] = d["T_eau_min"] - d["Delta_TMm"]
 
     lignes = []
 
@@ -109,10 +123,6 @@ def calcul_indicateurs(df, sub, verbose=False):
         a = sub_d["ampl"].dropna()
         row["Ampl. moy (°C)"] = round(a.mean(), 2) if len(a) else np.nan
         row["Ampl. σ (°C)"] = round(a.std(), 2) if len(a) > 1 else np.nan
-        # compensé (écart aux normales)
-        if has_delta:
-            row["Tmax comp (°C)"] = round(sub_d["T_max_comp"].max(), 2) if len(sub_d) else np.nan
-            row["Tmin comp (°C)"] = round(sub_d["T_min_comp"].min(), 2) if len(sub_d) else np.nan
         return row
 
     for m in range(1, 13):
@@ -125,8 +135,6 @@ def calcul_indicateurs(df, sub, verbose=False):
     # ligne Année
     row_an = _stats_periode(d, sub, "Année")
     row_an["Tmm30j brut (°C)"] = round(_tmm30j(d["T_eau_moy"]), 2) if "T_eau_moy" in d else np.nan
-    if has_delta:
-        row_an["Tmm30j comp (°C)"] = round(_tmm30j(d["T_moy_comp"]), 2)
     lignes.append(row_an)
 
     table = pd.DataFrame(lignes)
@@ -157,6 +165,10 @@ def calcul_indicateurs(df, sub, verbose=False):
     correlations = {}
     has_q = "Q" in d.columns and d["Q"].notna().any()
     has_air = "T_air" in d.columns and d["T_air"].notna().any()
+    # `has_delta` est ici le SECOND consommateur annonce plus haut. La
+    # condition est conservee TELLE QUELLE par le correctif 4 : la modifier
+    # ferait apparaitre deux correlations la ou il n'y en avait pas, ce qui
+    # serait un changement de comportement deguise en nettoyage.
     if has_delta and has_air:
         d["ecart_eau_air"] = d["T_eau_moy"] - d["T_air"]
 

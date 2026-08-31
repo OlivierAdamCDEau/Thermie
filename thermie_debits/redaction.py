@@ -569,3 +569,536 @@ def ligne_synthese(res):
     }
     # Garantit l'ordre et la complétude du schéma.
     return {c: vals.get(c, NA) for c in COLONNES_SYNTHESE}
+
+
+# ============================================================
+# 7 — LES ÉTATS DÉCLARÉS (D48)
+# ============================================================
+# Un seul bloc, rassemblant tout ce que la chaîne sait de ses propres limites
+# sur ce point de mesure.
+#
+# LE PRINCIPE, et il commande toute la rédaction qui suit :
+#
+#   Chaque contrôle annonce ce dont il a besoin, s'active si les données le
+#   permettent, et DIT à quelle marche il se trouve et ce qu'il ne voit pas.
+#   Un contrôle silencieusement désactivé sur un jeu pauvre est plus dangereux
+#   qu'un contrôle absent : il produit une attestation au lieu d'une alerte.
+#
+# Conséquence directe : UN CONTRÔLE QUI N'A RIEN TROUVÉ DOIT SE VOIR.
+# « Rien à signaler » et « contrôle non exécuté » ne produisent jamais la même
+# ligne. C'est pourquoi chaque contrôle rend un bloc même quand son compte
+# vaut zéro, et pourquoi trois valeurs cohabitent sans se confondre : un
+# nombre, « sans objet », et « non vérifiable ».
+#
+# Aucun seuil n'est introduit ici. Le niveau d'un bloc ne dépend jamais du
+# franchissement d'une valeur conventionnelle : il dépend de FAITS —
+# un contrôle n'a pas pu tourner, une année civile est absente, un
+# coefficient a été rejeté. Ces conditions se lisent sur les données et ne se
+# calibrent pas.
+
+NIVEAU_VERIFIE = "verifie"     # le contrôle a tourné et n'a rien à signaler
+NIVEAU_RESERVE = "reserve"     # le contrôle a trouvé quelque chose à dire
+NIVEAU_ALERTE = "alerte"       # le contrôle n'a pas pu se prononcer, ou un
+                               # résultat publié doit être lu autrement
+
+
+def _bloc(niveau, titre, lignes):
+    return dict(niveau=niveau, titre=titre,
+                lignes=[l for l in lignes if l])
+
+
+def _pc(n, total):
+    return f"{100.0 * n / total:.1f} %" if total else "—"
+
+
+_MOIS_FR = {1: "janvier", 2: "février", 3: "mars", 4: "avril", 5: "mai",
+            6: "juin", 7: "juillet", 8: "août", 9: "septembre",
+            10: "octobre", 11: "novembre", 12: "décembre"}
+
+
+def _etat_detecteur(res):
+    """Le détecteur de mise hors d'eau : à quelle marche, et ce qu'il ne voit pas."""
+    d = getattr(res, "diag_detecteur", None) or {}
+    if not d:
+        return _bloc(NIVEAU_ALERTE, "Détection de sonde hors d'eau",
+                     ["L'état de ce contrôle n'a pas été enregistré. "
+                      "Son résultat ne peut pas être interprété."])
+    if not d.get("hors_eau_actif"):
+        return _bloc(NIVEAU_ALERTE, "Détection de sonde hors d'eau",
+                     ["**Contrôle désactivé** dans les réglages. Aucune journée "
+                      "n'a été examinée à ce titre.",
+                      "Une absence de signalement ne signifie donc pas qu'aucune "
+                      "sonde n'est sortie de l'eau : personne n'a regardé."])
+    if not d.get("hors_eau_execute"):
+        return _bloc(NIVEAU_ALERTE, "Détection de sonde hors d'eau",
+                     ["**Contrôle non exécuté** : aucune température d'air "
+                      "exploitable sur la période de la sonde.",
+                      "Aucune journée n'est écartée à ce titre — ce qui n'est "
+                      "**pas** un constat d'absence d'exondation."])
+
+    n1, n2 = d.get("n_marche1", 0), d.get("n_marche2", 0)
+    ndiag = d.get("n_diagnosticables", 0)
+    nnd = d.get("n_non_diagnosticables", 0)
+    m2 = d.get("marche2_disponible")
+
+    lignes = [
+        f"*Ce qu'il lui faut :* la température maximale journalière de l'eau "
+        f"et la température moyenne de l'air. Un second niveau d'examen "
+        f"s'ajoute si le fichier d'air porte aussi les températures minimale "
+        f"et maximale du jour.",
+        f"*Ce qu'il a examiné :* **{ndiag} journées**, sur toute l'année.",
+        (f"*Ce qu'il a trouvé :* **{n1 + n2} journée(s) marquée(s)** "
+         f"({n1} au premier niveau"
+         + (f", {n2} ajoutée(s) par le second" if m2 else "")
+         + ")." if (n1 + n2) else
+         "*Ce qu'il a trouvé :* **aucune journée suspecte.** Le contrôle a "
+         "bien tourné : ce zéro est un résultat, pas une absence de contrôle."),
+    ]
+    if nnd:
+        lignes.append(
+            f"*Ce sur quoi il s'abstient :* **{nnd} journée(s)** qu'il ne sait "
+            f"pas juger — trop peu de jours dans le mois, ou une dispersion "
+            f"nulle. Elles restent dans la chronique : elles n'ont rien de "
+            f"défectueux, mais rien n'est affirmé à leur sujet.")
+
+    # D121 — LE SECOND MEMBRE DU PREMIER NIVEAU.
+    # Il ne detecte rien ; il repond a « ce decouplage vient-il de l'eau qui
+    # monte ou de l'air qui descend ». Sans lui, une vague de froid produit la
+    # meme signature qu'une sonde emergee. L'ecran ne le nommait pas : un
+    # lecteur ne pouvait pas savoir combien de journees il ecartait, ni ou il
+    # se taisait.
+    if d.get("signe_actif"):
+        _bloq = d.get("n_bloquees_par_signe", 0)
+        lignes.append(
+            "*Comment il distingue l'eau de l'air :* le premier niveau compare "
+            "la température de l'eau à celle de l'air. Un tel écart grandit "
+            "aussi bien quand l'eau monte que quand l'air descend, et la "
+            "différence seule ne dit pas lequel des deux a bougé. Une seconde "
+            "condition est donc exigée : **l'eau doit être plus chaude que "
+            "d'habitude à cette station et à ce mois-là**. Un coup de froid, "
+            "qui fait plonger l'air sans que l'eau bouge, ne passe plus pour "
+            "une sonde sortie de l'eau.")
+        lignes.append(
+            f"*Ce que cette seconde condition a écarté :* "
+            + (f"**{_bloq} journée(s)** que la seule différence eau-air aurait "
+               f"fait marquer, et où l'eau n'était pourtant pas plus chaude "
+               f"que d'ordinaire."
+               if _bloq else
+               "**aucune journée.** Sur cette chronique, les deux conditions "
+               "ont toujours été d'accord."))
+        _mois = d.get("mois_signe_muet") or []
+        if _mois:
+            _noms = ", ".join(_MOIS_FR[m] for m in _mois)
+            lignes.append(
+                f"*Là où cette condition ne se prononce pas :* **{_noms}** — "
+                f"trop peu de journées mesurées dans ce ou ces mois pour "
+                f"savoir ce qui y est habituel. Le contrôle ne marque alors "
+                f"aucune journée de ces mois, et cela ne vaut pas quitus : "
+                f"il n'a pas pu regarder.")
+    if not m2:
+        lignes.append(
+            f"⚠ *Ce qu'il ne voit pas :* **le second niveau d'examen est "
+            f"indisponible** — {d.get('motif_marche2') or 'données manquantes'}. "
+            f"Sans lui, le contrôle ne distingue pas une sonde sortie de l'eau "
+            f"d'une journée simplement chaude : il dispose du niveau de "
+            f"température, pas de la forme du signal sur la journée.")
+        if not d.get("structure_infra_journaliere"):
+            lignes.append(
+                "La chronique ne porte qu'une mesure par jour, ou son heure "
+                "n'a pas été reconnue. Le second niveau ne peut pas se "
+                "prononcer, par construction.")
+    elif not d.get("structure_infra_journaliere"):
+        # Cas prevu par la specification : les donnees du second niveau sont
+        # PRESENTES mais vides de sens. La chronique ne porte qu'une mesure par
+        # jour, ou son heure n'a pas ete reconnue : le minimum et le maximum du
+        # jour sont alors le meme point, et le rapport de formes vaut zero par
+        # construction. Le declarer « disponible » serait faux.
+        lignes.append(
+            "⚠ **Contrôle dégradé — le second niveau ne peut pas se "
+            "prononcer.** La chronique ne porte qu'une mesure par jour, ou "
+            "l'heure de ses mesures n'a pas été reconnue : le minimum et le "
+            "maximum du jour sont le même point, et la forme du signal "
+            "journalier est nulle par construction. Le premier niveau reste "
+            "actif ; sa lecture est celle d'un niveau de température, pas "
+            "d'une forme.")
+    else:
+        s = d.get("seuil_amplitude_air")
+        lignes.append(
+            "*Ce qu'il ne voit pas :* une sonde sortie de l'eau en permanence "
+            "— sa propre habitude serait alors celle d'une sonde exondée — et "
+            "l'émersion hivernale, dont la signature est inverse."
+            + (f" Le second niveau s'abstient quand l'amplitude de l'air du "
+               f"jour est inférieure à {s:.2f} °C, valeur tirée de ce jeu de "
+               f"données." if s else ""))
+    degrade = not d.get("structure_infra_journaliere")
+    niveau = (NIVEAU_ALERTE if (not m2 or degrade)
+              else NIVEAU_RESERVE if (n1 + n2 or nnd) else NIVEAU_VERIFIE)
+    return _bloc(niveau, "Détection de sonde hors d'eau", lignes)
+
+
+def _etat_journees_non_exploitables(res):
+    """Journées retenues par le contrôle qualité mais inexploitables."""
+    m = getattr(res, "marques_fusion", None)
+    total = int(len(m)) if m is not None else 0
+    if m is None or not total:
+        return _bloc(NIVEAU_VERIFIE, "Journées entrées dans le calcul",
+                     ["L'état de ce contrôle n'est pas disponible."])
+    nd = m[m["statut"] == "non_diagnosticable"]
+    n_air = sum(1 for ms in nd["motifs"]
+                if any("air absente" in x for x in ms))
+    n_dens = sum(1 for ms in nd["motifs"]
+                 if any("densité calendaire" in x for x in ms))
+    n = len(nd)
+    if not n:
+        return _bloc(NIVEAU_VERIFIE, "Journées entrées dans le calcul",
+                     [f"Les **{total} journées** retenues par le contrôle "
+                      f"qualité sont **toutes** entrées dans le calcul. Aucune "
+                      f"n'a été retirée faute de température d'air, ni faute "
+                      f"de voisines assez proches dans le calendrier."])
+    lignes = [f"**{n} journée(s) sur {total} ({_pc(n, total)}) n'ont pas pu "
+              f"être exploitées.**"]
+    if n_air:
+        lignes.append(
+            f"· **{n_air}** faute de température d'air à cette date. Ces "
+            f"journées d'eau ont bien été mesurées et le contrôle qualité les "
+            f"a retenues : elles ne sont ni écartées ni défectueuses, il leur "
+            f"manque une donnée qui ne vient pas de la sonde. Vérifier la "
+            f"station météo retenue — une autre station couvrant la période "
+            f"les rendrait au calcul.")
+    if n_dens:
+        lignes.append(
+            f"· **{n_dens}** faute de voisines : la température moyenne "
+            f"hebdomadaire est une moyenne sur sept jours *calendaires*, et "
+            f"ces journées-là sont trop isolées pour qu'une telle moyenne ait "
+            f"un sens.")
+    lignes.append(
+        "*Ce que cela retire :* ces journées ne reçoivent pas de température "
+        "corrigée du climat, n'entrent pas dans les pourcentages de "
+        "dépassement de seuil et ne comptent pas parmi les journées de "
+        "vulnérabilité. Elles restent visibles, avec leur motif.")
+
+    # Faits — jamais des seuils.
+    try:
+        import pandas as _pd
+        an = _pd.to_datetime(_pd.Series(list(nd["date"]))).dt.year
+        an_tot = _pd.to_datetime(_pd.Series(list(m["date"]))).dt.year
+        for a in sorted(set(an)):
+            if int((an == a).sum()) == int((an_tot == a).sum()):
+                lignes.append(
+                    f"⚠ **L'année {a} est entièrement absente du calcul.** Les "
+                    f"résultats ne décrivent pas cette année-là ; toute lecture "
+                    f"pluriannuelle porte sur les autres années uniquement.")
+        mois = _pd.to_datetime(_pd.Series(list(nd["date"]))).dt.month
+        n_ete = int(mois.isin([6, 7, 8, 9]).sum())
+        if n_ete:
+            lignes.append(
+                f"⚠ **{n_ete} de ces journées tombent entre juin et "
+                f"septembre**, la période sur laquelle est estimée la relation "
+                f"entre la température de l'air et celle de l'eau. Cette "
+                f"relation repose donc sur un échantillon estival réduit.")
+    except Exception:
+        pass
+    return _bloc(NIVEAU_RESERVE, "Journées entrées dans le calcul", lignes)
+
+
+def _etat_lecture(res):
+    """Mesures écartées à la lecture du fichier de sonde."""
+    ml = getattr(res, "marques_lecture", None)
+    if ml is None:
+        return _bloc(NIVEAU_VERIFIE, "Lecture du fichier de sonde",
+                     ["L'état de ce contrôle n'est pas disponible."])
+    n = int(len(ml))
+    if not n:
+        return _bloc(NIVEAU_VERIFIE, "Lecture du fichier de sonde",
+                     ["**Aucune mesure n'a été écartée à la lecture.** Toutes "
+                      "les lignes du fichier portaient une date et une "
+                      "température lisibles. Ce contrôle a bien tourné : le "
+                      "zéro est un résultat."])
+    causes = {}
+    for x in ml["motif"]:
+        cle = ("date illisible" if "date illisible" in x
+               else "température illisible" if "temperature" in x or "température" in x
+               else "date et température illisibles")
+        causes[cle] = causes.get(cle, 0) + 1
+    detail = " ; ".join(f"{v} pour {k}" for k, v in sorted(causes.items()))
+    return _bloc(NIVEAU_RESERVE, "Lecture du fichier de sonde",
+                 [f"**{n} mesure(s) écartée(s)** avant tout calcul : {detail}.",
+                  "Une mesure dont la date est illisible ne s'impute à aucune "
+                  "journée ; le total peut donc dépasser la somme des comptes "
+                  "journaliers."])
+
+
+def _etat_completude(res):
+    """Complétude des journées : le trou maximal, et l'indéterminable."""
+    mc = getattr(res, "marques_completude", None)
+    if mc is None or not len(mc):
+        return _bloc(NIVEAU_VERIFIE, "Complétude des journées de mesure",
+                     ["L'état de ce contrôle n'est pas disponible."])
+    if (mc["statut"] == "indeterminable").all():
+        return _bloc(
+            NIVEAU_ALERTE, "Complétude des journées de mesure",
+            ["⚠ **Contrôle non applicable — sans objet, et non « rien à "
+             "signaler ».**",
+             "Toutes les mesures de cette sonde portent le même horodatage : "
+             "l'heure de la journée n'a pas été reconnue dans le fichier. "
+             "L'outil ne sait donc rien de la répartition des mesures dans la "
+             "journée et **ne peut pas juger** leur complétude.",
+             "**Une absence de signalement ne vaut pas quitus ici** : elle "
+             "signifie que personne n'a pu regarder. Les moyennes "
+             "journalières restent calculées et utilisées ; c'est leur "
+             "représentativité qui n'est pas vérifiable."])
+    sig = mc[mc["statut"] == "signalee"]
+    total = int(len(mc))
+    if not len(sig):
+        return _bloc(NIVEAU_VERIFIE, "Complétude des journées de mesure",
+                     [f"**Aucune journée signalée sur {total}.** Chaque journée "
+                      f"a été examinée : son plus long intervalle sans mesure "
+                      f"reste dans l'ordinaire de cette sonde. Ce contrôle a "
+                      f"bien tourné."])
+    lignes = [
+        f"**{len(sig)} journée(s) sur {total} ({_pc(len(sig), total)}) "
+        f"reposent sur des mesures groupées.**",
+        "*Ce qui est mesuré :* le plus long intervalle de la journée pendant "
+        "lequel la sonde n'a rien enregistré. Sont signalées les journées dont "
+        "cet intervalle dépasse **deux fois** celui d'une journée ordinaire de "
+        "cette sonde — le repère est la sonde elle-même, quelle que soit sa "
+        "cadence de mesure.",
+    ]
+    try:
+        t = sig["trou_max_h"].astype(float)
+        lignes.append(f"*Ampleur :* de **{t.min():.0f} h** à **{t.max():.0f} h** "
+                      f"sans mesure ; médiane **{t.median():.0f} h**.")
+        if "n_mesures" in sig.columns and sig["n_mesures"].notna().any():
+            nm = sig["n_mesures"].astype(float)
+            lignes.append(
+                f"*Ce ne sont pas des journées pauvres :* elles portent "
+                f"**{nm.median():.0f} mesures** en médiane. Leurs mesures sont "
+                f"**groupées**, pas rares.")
+    except Exception:
+        pass
+    lignes += [
+        "*Ce que cela veut dire :* la moyenne de ces journées ne couvre pas le "
+        "cycle jour-nuit et peut être décalée vers les heures effectivement "
+        "mesurées.",
+        "**Ces journées ne sont pas écartées** : elles entrent dans tous les "
+        "calculs. Le signalement est un avertissement de lecture, pas un "
+        "filtre.",
+        "*Ce que ce signalement ne dit pas :* qu'une journée signalée est "
+        "fausse, ni qu'une journée non signalée est complète. Une journée dont "
+        "les mesures sont régulièrement espacées mais rares n'est pas "
+        "signalée.",
+        "*Réserve connue :* l'amplitude jour-nuit publiée pour ces journées "
+        "est calculée sur les mêmes mesures groupées. Une amplitude qui ignore "
+        "une partie de la nuit n'est pas une amplitude jour-nuit.",
+    ]
+    return _bloc(NIVEAU_RESERVE, "Complétude des journées de mesure", lignes)
+
+
+def _etat_couplage(res):
+    """Le statut de la relation air-eau, estivale puis par espèce."""
+    s = res.sensibilite or {}
+    lignes, niveau = [], NIVEAU_VERIFIE
+    val = s.get("validite")
+    m_app, m_est = s.get("m"), s.get("m_estime")
+    if val is False:
+        niveau = NIVEAU_ALERTE
+        lignes += [
+            "⛔ **La relation entre la température de l'air et celle de l'eau "
+            "n'a pas pu être établie sur cette chronique.**",
+            f"*Ce qui a été tenté :* la pente reliant les deux, estimée sur "
+            f"**{s.get('n', '—')} journées** de juin à septembre.",
+            (f"*Ce qui a été obtenu :* une pente estimée de "
+             f"**{m_est:.4f}**"
+             + (f", dont l'intervalle de confiance à 95 % vaut "
+                f"± {s['validite_ic95_demi_largeur']:.4f}"
+                if s.get("validite_ic95_demi_largeur") is not None else "")
+             + "." if m_est is not None else ""),
+            f"*Pourquoi elle est écartée :* {s.get('validite_critere_rejetant') or '—'}.",
+            "*Ce que l'outil publie donc :* les **températures brutes**. La "
+            "correction du climat n'est pas appliquée.",
+            "⚠ *Ce que cela interdit de conclure :* les pourcentages de "
+            "dépassement et les journées de vulnérabilité décrivent **l'année "
+            "observée, avec la météo qu'elle a eue** — pas une année standard. "
+            "Ce point **n'est comparable ni à un autre point, ni à lui-même "
+            "d'une année sur l'autre**. Un été chaud produira des dépassements "
+            "sans qu'on puisse dire s'ils viennent du cours d'eau ou du climat.",
+            "⚠ *Ce que cela n'autorise pas non plus :* conclure que ce cours "
+            "d'eau est insensible à l'air. Une relation qu'on ne peut pas "
+            "distinguer de zéro n'est pas une relation nulle : la cause peut "
+            "être une chronique trop courte, une station d'air trop éloignée, "
+            "ou une alimentation par nappe. L'outil ne les distingue pas.",
+            "*La valeur affichée à côté est la pente estimée* — elle n'a pas "
+            "été appliquée. Zéro n'est pas une mesure du couplage, c'est la "
+            "valeur retenue faute d'en avoir une.",
+        ]
+    elif val is True:
+        lignes.append(
+            f"**Relation air-eau établie** sur {s.get('n', '—')} journées "
+            f"estivales ; pente **{m_app:.4f}**. Les températures publiées sont "
+            f"corrigées du climat de l'année.")
+    else:
+        niveau = NIVEAU_RESERVE
+        lignes.append(
+            "Le statut de la relation air-eau n'a pas été évalué sur cette "
+            "chronique.")
+
+    fr = res.fraie or {}
+    for sous in (fr.get("sous_indicateurs") or []):
+        info = sous.get("m_info") or {}
+        esp = sous.get("espece") or "espèce"
+        if info.get("statut") == "replie":
+            niveau = NIVEAU_ALERTE if niveau != NIVEAU_ALERTE else niveau
+            lignes.append(
+                f"⚠ **{esp} — la relation n'a pas été ré-estimée sur la "
+                f"période de reproduction** : {info.get('n', '—')} journées "
+                f"seulement, trop peu pour l'établir. La période de "
+                f"reproduction est donc corrigée avec la relation de **l'été**, "
+                f"ce qui n'est pas la même saison.")
+        elif info.get("validite") is False:
+            niveau = NIVEAU_ALERTE
+            lignes.append(
+                f"⛔ **{esp} — relation non établie sur la période de "
+                f"reproduction** ({info.get('n', '—')} journées ; "
+                f"{info.get('critere_rejetant') or '—'}). Pour cette espèce, "
+                f"les températures de cette période sont les **températures "
+                f"brutes**. Le diagnostic de reproduction porte sur l'année "
+                f"observée. **Le statut est par espèce** : une autre espèce du "
+                f"même point peut avoir une relation établie.")
+    return _bloc(niveau, "Relation entre la température de l'air et celle de "
+                         "l'eau", lignes)
+
+
+def _etat_normales(res):
+    """Les normales de référence."""
+    dn = res.diag_normales or {}
+    av = dn.get("avertissements") or []
+    n = dn.get("n_annees_ref")
+    if av:
+        return _bloc(NIVEAU_RESERVE, "Normales de référence",
+                     [f"**{a}**" for a in av]
+                     + ["Les anomalies climatiques, et donc les températures "
+                        "corrigées, reposent sur ces normales."])
+    return _bloc(NIVEAU_VERIFIE, "Normales de référence",
+                 [f"Normales calculées sur **{n} années** de la période de "
+                  f"référence." if n else
+                  "Normales calculées sur la période de référence."])
+
+
+def _etat_indicateurs_descriptifs(res):
+    """Ce que l'outil publie sans l'avoir vérifié."""
+    return _bloc(
+        NIVEAU_RESERVE, "Indicateurs descriptifs — une réserve de lecture",
+        ["La **température moyenne maximale sur 30 jours** publiée dans les "
+         "indicateurs mensuels est calculée sur **trente mesures journalières "
+         "consécutives dans le fichier**, et non sur trente jours du "
+         "calendrier. Là où la chronique présente des interruptions, la "
+         "fenêtre les enjambe : elle peut donc couvrir une période bien plus "
+         "longue que trente jours.",
+         "Cet indicateur est **descriptif** : il n'entre dans aucun score, "
+         "dans aucun seuil et dans aucun débit de référence. Mais un lecteur "
+         "croira lire trente jours si on ne le lui dit pas."])
+
+
+def etats_declares(res):
+    """
+    TOUS les états déclarés de ce point de mesure, dans un ordre fixe.
+
+    L'ordre ne change jamais : le lecteur apprend où regarder. Chaque contrôle
+    rend un bloc **même quand il n'a rien trouvé**, avec son niveau —
+    `verifie`, `reserve` ou `alerte`. Un contrôle absent de la liste serait un
+    contrôle dont on ne saurait pas s'il a tourné.
+    """
+    return [
+        _etat_detecteur(res),
+        _etat_journees_non_exploitables(res),
+        _etat_lecture(res),
+        _etat_completude(res),
+        _etat_couplage(res),
+        _etat_normales(res),
+        _etat_indicateurs_descriptifs(res),
+    ]
+
+
+_MARQUEURS = ("**", "*", "⚠ ", "⛔ ", "· ")
+
+
+def etats_declares_texte(res):
+    """
+    Les mêmes blocs, sans balisage, pour les livrables qui ne savent pas le
+    rendre — Word et Excel.
+
+    Le TEXTE est écrit une seule fois, dans `etats_declares`. Cette fonction
+    n'en produit pas d'autre : elle retire les marques d'emphase. Deux
+    rédactions parallèles finiraient par diverger, et c'est le livrable qui
+    porterait la version périmée.
+    """
+    sortie = []
+    for b in etats_declares(res):
+        lignes = []
+        for l in b["lignes"]:
+            for m in _MARQUEURS:
+                l = l.replace(m, "")
+            lignes.append(l.strip())
+        sortie.append(dict(niveau=b["niveau"], titre=b["titre"],
+                           lignes=lignes))
+    return sortie
+
+
+# Les deux tables de rendu : un verdict court et une couleur, pour les
+# livrables qui attendent la forme habituelle d'un encadre. Le NIVEAU reste
+# celui des etats declares ; seule sa presentation change.
+VERDICT_ETAT = {NIVEAU_ALERTE: "point d'attention",
+                NIVEAU_RESERVE: "réserve de lecture",
+                NIVEAU_VERIFIE: "vérifié, rien à signaler"}
+COULEUR_ETAT = {NIVEAU_ALERTE: "alerte", NIVEAU_RESERVE: "attention",
+                NIVEAU_VERIFIE: "ok"}
+
+
+def statut_normalisation(res):
+    """
+    Une phrase, et une seule : la température publiée est-elle corrigée du
+    climat, ou brute ?
+
+    C'est le trou que D68 ferme. Un point dont le coefficient est rejeté
+    publie des scores calculés sur des températures brutes,
+    typographiquement identiques à ceux d'un point normalisé.
+    """
+    s = res.sensibilite or {}
+    v = s.get("validite")
+    if v is False:
+        return (NIVEAU_ALERTE, "ATTENTION — températures BRUTES. La relation air-eau n'a pas "
+                "pu être établie sur cette chronique : la correction du climat "
+                "n'est pas appliquée. Les pourcentages et les journées de "
+                "vulnérabilité ci-dessous décrivent l'année observée, avec la "
+                "météo qu'elle a eue. Ce point n'est comparable ni à un autre "
+                "point, ni à lui-même d'une année sur l'autre.")
+    if v is True:
+        return (NIVEAU_VERIFIE, "Températures corrigées du climat de l'année (relation "
+                "air-eau établie). Les valeurs sont comparables entre points "
+                "et entre années.")
+    return (NIVEAU_RESERVE,
+            "Statut de la relation air-eau non évalué sur cette chronique.")
+
+
+def resume_etats(res):
+    """
+    Une ligne, pour la vue de synthèse : combien d'alertes, combien de
+    réserves, combien de contrôles passés sans rien à signaler.
+
+    Elle existe pour qu'un lecteur qui n'ouvre jamais le détail sache
+    néanmoins s'il devrait l'ouvrir.
+    """
+    b = etats_declares(res)
+    a = sum(1 for x in b if x["niveau"] == NIVEAU_ALERTE)
+    r = sum(1 for x in b if x["niveau"] == NIVEAU_RESERVE)
+    v = sum(1 for x in b if x["niveau"] == NIVEAU_VERIFIE)
+    if a:
+        return (NIVEAU_ALERTE,
+                f"{a} point(s) d'attention, {r} réserve(s), {v} contrôle(s) "
+                f"sans rien à signaler.")
+    if r:
+        return (NIVEAU_RESERVE,
+                f"{r} réserve(s) de lecture, {v} contrôle(s) sans rien à "
+                f"signaler. Aucun point d'attention.")
+    return (NIVEAU_VERIFIE,
+            f"{v} contrôle(s) ont tourné et n'ont rien à signaler.")

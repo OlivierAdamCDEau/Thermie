@@ -2,10 +2,21 @@ __pycache__/
 *.py[cod]
 .venv/
 outputs/
+.DS_Store
+.streamlit/secrets.toml
+
+# Corpus, mesures et references figees : non diffuses
+/data/
+/out/
+/ref/
+/tests/reference/*/
+/tests/reference_v4_5/
+/tests/reference_cli/
+/docs/etape1_extraits_bruts.md
+
 *.png
 *.xlsx
 !examples/*.xlsx
 *.csv
 !examples/*.csv
-.DS_Store
-.streamlit/secrets.toml
+*.docx

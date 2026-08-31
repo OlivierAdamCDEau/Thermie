@@ -40,6 +40,27 @@ class Resultats:
     df_air: Any = None
     df: Any = None
     rapport_qc: Any = None
+    # D57 — le rapport des journees ecartees, augmente des valeurs de
+    # diagnostic du detecteur. Destine au PERIMETRE : le harnais et l'ecran.
+    # `rapport_qc` reste la vue heritee, inchangee.
+    rapport_qc_detaille: Any = None
+    # CORRECTIF 5 — la table de marquage de la fusion. Chaque journee d'eau
+    # retenue par le controle qualite y subsiste, exploitable ou non. C'est ce
+    # qui permet a l'ecran de declarer la degradation au lieu de la taire.
+    marques_fusion: Any = None
+    # CORRECTIF 10 — la table des mesures que la LECTURE ecarte, une ligne par
+    # mesure, avec sa cause distinguee. Un cran plus bas que `marques_fusion`,
+    # qui travaille a la journee : ici on est encore a la mesure.
+    marques_lecture: Any = None
+    # CORRECTIF 12 — la table de completude de journee. Chaque journee
+    # observee y figure avec son trou maximal, son statut et son motif.
+    # AUCUNE journee n'en sort : c'est un marquage, pas un filtre.
+    marques_completude: Any = None
+    # D48 — ce que les detecteurs du controle qualite ont fait, qu'ils aient
+    # trouve quelque chose ou non. Sans lui, un jeu sans journee ecartee ne
+    # porte aucune trace du detecteur, et l'ecran ne peut pas distinguer
+    # « rien a signaler » de « controle non execute ».
+    diag_detecteur: dict = field(default_factory=dict)
     diag_debit: dict = field(default_factory=dict)
     diag_normales: dict = field(default_factory=dict)
     diag_air_station: dict = field(default_factory=dict)
@@ -80,7 +101,10 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
 
     # ---- 1. Chargement ----
     if verbose: print(f"\n{'='*60}\n  {nom} — {ctx['label']}\n  Mode : {config.mode}\n{'='*60}")
-    daily_eau, sub_eau = io.charger_eau(
+    # CORRECTIF 10 (D60) — `marquer_lecture` rend la meme chronique que
+    # `charger_eau` rendait, PLUS la table des mesures que la lecture ecarte.
+    # La chronique, elle, est inchangee.
+    daily_eau, sub_eau, marques_lecture = io.marquer_lecture(
         config.sources.fichier_eau,
         col_date=config.sources.eau_col_date,
         col_temp=config.sources.eau_col_temp,
@@ -90,6 +114,17 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
         retour_sous_quotidien=True)
     res.daily_eau_brut = daily_eau
     res.sub_eau = sub_eau
+    res.marques_lecture = marques_lecture
+    # CORRECTIF 12 (D86, D89) — le marquage vit dans une table SEPAREE et
+    # n'entre pas dans `daily_eau` : le faire remonterait jusqu'a `res.df` par
+    # la fusion, et changerait les colonnes que le harnais publie pour une
+    # raison sans rapport avec ce correctif.
+    res.marques_completude = io.marquer_completude(
+        sub_eau, daily=daily_eau, facteur=config.qc.completude_facteur,
+        verbose=verbose)
+    if verbose and len(marques_lecture):
+        print(f"  {len(marques_lecture)} mesure(s) ecartee(s) a la lecture "
+              f"(date ou temperature illisible)")
 
     # Air : nouvelle logique (air brut → normales + écarts calculés), avec
     # repli sur l'ancien EcartNormales pré-calculé si fourni (compatibilité).
@@ -152,14 +187,24 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
 
     # ---- 3. Contrôle qualité ----
     if verbose: print("\nContrôle qualité...")
-    propre, rapport = qcmod.controle_qualite(
-        daily_eau, df_air, config.qc.to_legacy_dict(), verbose=verbose)
+    res.diag_detecteur = {}
+    _marques_qc = qcmod.marquer_qualite(
+        daily_eau, df_air, config.qc.to_legacy_dict(), verbose=verbose,
+        diag=res.diag_detecteur)
+    propre = qcmod.vue_retenue(_marques_qc)
+    rapport = qcmod.rapport_ecartes(_marques_qc)
     res.rapport_qc = rapport
+    res.rapport_qc_detaille = qcmod.rapport_ecartes_detaille(_marques_qc)
 
     # ---- 4. Fusion + normalisation ----
-    df = core.fusionner(propre, df_air, ecart, normales, df_debits=df_debits,
-                        lissage_delta=getattr(config, 'normalisation_lissage_delta', 7))
+    # CORRECTIF 5 — `fusionner_marque` rend la meme chronique exploitable que
+    # `fusionner` rendait, PLUS la table des journees que la fusion n'a pas pu
+    # exploiter. La chronique, elle, est inchangee.
+    df, marques = core.fusionner_marque(
+        propre, df_air, ecart, normales, df_debits=df_debits,
+        lissage_delta=getattr(config, 'normalisation_lissage_delta', 7))
     res.df = df
+    res.marques_fusion = marques
 
     # ---- 5. Chaîne de calcul thermique ----
     if verbose: print("\nÉtape 1 — Sensibilité...")
@@ -190,7 +235,7 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
     F["synthese_tableau"] = figmod.fig_synthese_tableau(sens, vul, sgvt, ctx, nom, out)
     F["synthese_jauge"]   = figmod.fig_synthese_jauge(sgvt, nom, out)
 
-    # ---- 6bis. Indicateurs bruts/compensés + corrélations ----
+    # ---- 6bis. Indicateurs bruts + corrélations ----
     from . import indicateurs as indmod
     res.indicateurs = indmod.calcul_indicateurs(df, sub_eau, verbose=verbose)
     F["correlations"] = figmod.fig_correlations_indicateurs(

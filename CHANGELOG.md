@@ -1,5 +1,83 @@
 # Journal des versions
 
+## 4.6 — 2026-08-31
+- **Ce qui change à la lecture.** La normalisation climatique et le
+  contrôle qualité ne suivent plus les mêmes règles : sur trente-deux
+  stations, deux changent de catégorie et voient leur note de synthèse se
+  déplacer, et le tableau mensuel des indicateurs perd trois colonnes.
+  Partout ailleurs, les catégories publiées sont inchangées.
+- **Détection des sondes hors de l'eau.** L'écart fixe de 4 °C entre l'eau
+  et l'air — qui supposait une station météo proche et un climat donné, et
+  n'était atteint presque nulle part — cède la place à une comparaison de
+  chaque station à sa propre habitude, au même mois ; un second niveau
+  d'examen vérifie la forme de la journée lorsque le fichier d'air fournit
+  ses températures minimale et maximale. C'est le seul correctif qui ait
+  déplacé un diagnostic publié.
+- **Fenêtre d'examen du détecteur portée à l'année entière.** Il ne
+  regardait que juin à septembre, alors que les sondes se posent au
+  printemps et qu'une sonde qui enregistre avant d'être immergée produit
+  exactement la signature cherchée. Une seconde condition écarte la
+  confusion avec une vague de froid : l'eau doit aussi être plus chaude que
+  d'habitude à cette station et à ce mois-là. 151 journées retenues au lieu
+  de 69, aucun diagnostic publié modifié.
+- **La relation air–eau peut désormais être déclarée non établie.** La
+  fiabilité du coefficient de correction climatique est testée ;
+  insuffisante, la correction n'est pas appliquée et le document le dit —
+  les valeurs décrivent l'année observée avec la météo qu'elle a eue, et ne
+  sont comparables ni à une autre station ni à une autre année.
+- **Écarter n'est plus effacer.** Les quatre étapes qui supprimaient des
+  données sans trace — contrôle qualité, mise en correspondance de l'eau et
+  de l'air, lecture du fichier de sonde, agrégation en journées —
+  produisent chacune un tableau des données écartées (date, cause, valeur),
+  sans que rien ne change au calcul. Une station y révèle une année 2012
+  entièrement absente des résultats faute de température d'air : cent deux
+  journées d'été manquantes que rien n'indiquait.
+- **Les journées incomplètes sont signalées.** Une journée dont la sonde
+  n'a enregistré que quelques heures est repérée — en comparant son plus
+  grand trou de mesure à ce qui est habituel sur la station — puis
+  signalée, sans être exclue : la décision de l'écarter appartient au
+  chargé d'étude, pas à l'outil.
+- **Les moyennes glissantes portent sur des jours, non sur des lignes.**
+  Sur une chronique trouée, une fenêtre de sept jours pouvait couvrir six
+  mois. Les trois calculs concernés — détection de sonde bloquée, lissage
+  de l'eau, lissage de l'air — s'appuient désormais sur le calendrier.
+- **Le lissage porte sur toute la donnée disponible.** Le lissage de la
+  chronique d'eau et celui de l'anomalie de l'air ne portaient que sur la
+  partie déjà filtrée de la série, où chaque valeur écartée en amont
+  creusait un trou. Ils sont maintenant calculés sur la série complète,
+  puis restreints — l'ordre des opérations change le résultat.
+- **La normale de l'air suit le calendrier.** Elle était calculée en
+  numérotant les jours depuis le 1ᵉʳ janvier ; une année bissextile décale
+  ce numéro d'une unité à partir du 1ᵉʳ mars, et la normale du 15 juillet y
+  était celle du 14. Près de 90 % des jours de l'année étaient concernés.
+  Le calcul se fait sur le couple (mois, jour).
+- **Les températures minimale et maximale de l'air ne sont plus jetées.**
+  Souvent portées par le fichier météorologique en plus de la moyenne du
+  jour, elles étaient supprimées à la lecture ; les conserver a permis le
+  second niveau d'examen du détecteur de sondes hors d'eau.
+- **Retrait d'une famille d'indicateurs redondants.** Deux corrections
+  climatiques de la même température, calculées de deux façons, étaient
+  publiées sous des noms voisins dans le même document ; celle qui
+  n'alimentait rien en aval et n'était comparable à rien est supprimée. Le
+  tableau mensuel des indicateurs passe de 11 à 8 colonnes, 777 valeurs
+  cessent d'être publiées, aucun diagnostic n'en dépend.
+- **Les valeurs par défaut de l'interface viennent d'une source unique.**
+  Une trentaine de réglages étaient écrits en dur, en double du paramétrage
+  de référence, et dix-sept coïncidaient — c'était précisément le risque :
+  un doublon qui coïncide ne se voit pas, il diverge le jour où l'un des
+  deux change.
+- **Chaque contrôle publie son état.** Un contrôle désactivé, ou qui n'a
+  pas pu s'exécuter faute de données, affichait la même chose qu'un
+  contrôle n'ayant rien trouvé. Un onglet « ce qui a été vérifié » présente
+  désormais chaque contrôle, ce qu'il a examiné, ce qu'il a trouvé et ce
+  sur quoi il s'abstient — y compris quand il n'a rien trouvé. Le même
+  texte figure dans le rapport Word et le classeur Excel.
+- **Le statut de la correction climatique figure dans les livrables.** Une
+  station dont le coefficient a été rejeté publiait des chiffres
+  typographiquement identiques à ceux d'une station normalisée. Le rapport
+  et le classeur disent maintenant si les températures sont normalisées ou
+  brutes, avant les chiffres que ce statut qualifie.
+
 ## 4.5 — 2026-07-30
 - **Zone intermédiaire : choix de l'espèce repère.** La zonation SANDRE
   intermédiaire admet deux espèces repères thermiques ; l'ombre commun

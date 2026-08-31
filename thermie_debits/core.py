@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from .qc import (STATUT_RETENU, STATUT_ECARTE, STATUT_NON_DIAGNOSTICABLE,
+                 SEP_MOTIFS, fenetre_mobile_calendaire)
 from .config import (PENTE_SEVERITE, FACTEUR_RESISTANCE, ROMBOUGH_DELTA,
                      FRAIE_MIN_JOURS_CENTRAL, SGVT_POIDS_4, SGVT_POIDS_3,
                      FRAIE_SCORE_ELARGIE, FRAIE_SCORE_LETAL,
@@ -69,21 +71,155 @@ def cat_aigue(n):
 
 
 
+# ------------------------------------------------------------------
+# CORRECTIF 5 — les motifs propres à la fusion
+# ------------------------------------------------------------------
+# Une journée d'eau peut être parfaitement saine et rester indiagnosticable :
+# il lui manque une donnée qui ne vient pas d'elle. Ces motifs nomment ce
+# manque. Ils sont DISTINCTS de ceux du contrôle qualité, qui portent sur la
+# sonde d'eau elle-même, et distincts entre eux : l'air absent et la densité
+# insuffisante n'appellent pas la même correction sur le terrain.
+MOTIF_AIR_ABSENTE = "température d'air absente à cette date (station air)"
+MOTIF_EAU_ABSENTE = "température d'eau absente malgré une journée retenue"
+
+
+def motif_densite(fenetre, min_periods):
+    """Le motif de D45, qui porte les deux nombres dont il dépend."""
+    return (f"densité calendaire insuffisante "
+            f"(< {min_periods} jours observés sur {fenetre})")
+
+
+# ------------------------------------------------------------------
+# CORRECTIF 2 — le support des moyennes mobiles est un CALENDRIER
+# ------------------------------------------------------------------
+def moyenne_mobile_calendaire(dates, valeurs, fenetre, min_periods):
+    """
+    Moyenne mobile centrée sur une fenêtre de `fenetre` JOURS CALENDAIRES.
+
+    LE DÉFAUT CORRIGÉ
+    -----------------
+    `Series.rolling(window=7)` compte des LIGNES, pas des jours. La chronique
+    journalière ne contient que les jours PRÉSENTS : dès qu'une lacune s'y
+    ouvre, une fenêtre de sept lignes couvre plus de sept jours et moyenne
+    des valeurs séparées de plusieurs mois. Ce n'est pas un cas d'école : sur
+    le corpus de référence, 1 131 journées (1,68 %, 26 points sur 32) portent
+    une fenêtre qui enjambe une lacune, la plus longue atteignant 1 716 jours,
+    pour un écart allant jusqu'à 6,10 °C sur Tmh et 6,77 °C sur Delta_TMm_liss
+    (mesure d'étape 6, `out/etape6/C1_index_positionnel.csv`).
+
+    LA CORRECTION
+    -------------
+    La série est réindexée sur un calendrier journalier CONTINU entre sa
+    première et sa dernière date. Les jours absents y occupent leur place
+    sans y apporter de valeur : ce sont des NaN. La fenêtre compte alors des
+    JOURS, et `min_periods` compte les jours réellement observés parmi eux.
+    Le résultat est ramené sur l'index d'origine — ni ligne ajoutée, ni ligne
+    perdue, seules les valeurs changent.
+
+    CE QUI N'EST PAS CHANGÉ
+    -----------------------
+    `fenetre` et `min_periods` restent ceux de la version antérieure. Ce
+    correctif change le SUPPORT du lissage, pas le lissage. Leur provenance
+    est déclarée à chaque appel.
+
+    CONSÉQUENCE ASSUMÉE
+    -------------------
+    Sur un calendrier, `min_periods` cesse d'être une commodité de démarrage
+    pour devenir une exigence de DENSITÉ : une journée dont la fenêtre
+    calendaire ne contient pas assez de jours observés ne reçoit plus de
+    valeur. C'est le comportement recherché — sur le corpus, 18 journées sur
+    67 392 la perdent, toutes au voisinage d'une lacune, aucune en extrémité
+    de chronique, et l'une d'elles reposait sur UNE seule journée observée.
+    Une moyenne de sept jours calculée sur une journée était un résultat, pas
+    une mesure.
+    """
+    # L'implémentation vit dans `qc.fenetre_mobile_calendaire`, que le
+    # détecteur de plateau emploie aussi avec l'écart-type. Une seule
+    # implémentation, deux usages : `core` importe `qc`, jamais l'inverse.
+    return fenetre_mobile_calendaire(dates, valeurs, fenetre, min_periods,
+                                     agregat="mean")
+
+
 # ============================================================
 # FUSION FINALE + NORMALISATION (note §2.3, normales 1991–2020)
 # ============================================================
-def fusionner(daily_eau_propre, df_air, ecart_by_date, normales_lkp,
-              df_debits=None, lissage_delta=7):
+def fusionner_marque(daily_eau_propre, df_air, ecart_by_date, normales_lkp,
+                     df_debits=None, lissage_delta=7):
     """
-    Fusionne eau (nettoyée) + air + normales (+ débits déjà fusionnés).
-    Calcule T_air_std, Tmh (moy. mobile 7j) et prépare les colonnes d'analyse.
+    Fusionne eau (nettoyée) + air + normales (+ débits déjà fusionnés), et
+    MARQUE les journées que la fusion ne peut pas exploiter au lieu de les
+    effacer.
+
+    Retourne `(df, marques)` :
+
+      df       la chronique exploitable — EXACTEMENT ce que `fusionner`
+               renvoyait avant le correctif 5, mêmes lignes, mêmes colonnes,
+               mêmes valeurs ;
+      marques  une table de MÊME LONGUEUR que `daily_eau_propre`, où chaque
+               journée lue subsiste, avec `statut`, `motifs`, `motif` et
+               `exploitable`.
+
+    CORRECTIF 5 (registre C6) — LA JOINTURE ÉTAIT INTERNE
+    ------------------------------------------------------
+    La première ligne de cette fonction était :
+
+        df = daily_eau_propre.merge(df_air, on="date", how="inner")
+
+    Une jointure INTERNE efface les journées d'eau que la station d'air ne
+    couvre pas. Elles disparaissaient sans motif, sans compte et sans trace :
+    ni dans le rapport du contrôle qualité — elles n'ont rien de défectueux —
+    ni nulle part ailleurs. Mesuré sur le corpus avant correction :
+    **636 journées sur 68 028 (0,93 %), sur 23 des 32 points**, dont
+    `La Moselle à Hielle` qui perdait **102 de ses 303 journées (33,7 %),
+    d'un seul tenant, du 6 juillet au 15 octobre 2012** — tout son été — et
+    `LA PLAINE A RAON-SUR-PLAINE` **330 sur 1 545 (21,4 %)**, dont l'année
+    2008 en entier.
+
+    Une chronique d'eau dont un tiers disparaît parce que la station d'air a
+    une lacune n'est pas une chronique complète : c'est un résultat dégradé,
+    et l'utilisateur doit l'apprendre de l'écran, pas le découvrir.
+
+    La jointure passe donc à GAUCHE, et ce que la fusion ne peut pas exploiter
+    est marqué `non_diagnosticable` avec son motif propre.
+
+    D45 — LA DENSITÉ CALENDAIRE
+    ----------------------------
+    Le correctif 2 laisse sans `Tmh` les journées dont la fenêtre calendaire
+    ne contient pas assez de jours observés — 18 sur le corpus, dont une qui
+    n'en comptait qu'un seul. Elles aussi disparaissaient sans trace, plus
+    loin dans la chaîne. Elles prennent le même statut, avec un motif
+    DISTINCT : l'air absent et la densité insuffisante n'appellent pas la
+    même correction sur le terrain.
+
+    CE QUI N'EST PAS CHANGÉ, ET POURQUOI
+    -------------------------------------
+    La chaîne de calcul tourne sur les seules journées exploitables, comme
+    avant. Une journée sans air ne peut pas entrer dans le lissage de `Tmh`
+    sans changer la valeur de ses voisines : ce serait un troisième correctif,
+    déguisé en effet du cinquième. Il est mesuré et proposé en alternative
+    fermée dans le rapport d'étape 7, pas décidé ici.
+
+    Les journées sans `Tmh`, elles, RESTENT dans la vue exploitable — elles y
+    étaient, avec leur `Tmh` vide, et les en retirer déplacerait
+    `06_coefficients.csv`, que l'étape déclare figé. Leur statut est une
+    information ajoutée, pas une suppression de plus.
 
     df_debits : DataFrame [date, Q, Q_inf, (Q_desinf)] produit par
                 io_data.fusionner_debits(), ou None (mode thermie seule).
                 La colonne Q y est déjà la base de calcul retenue.
     """
-    df = daily_eau_propre.merge(df_air, on="date", how="inner")
-    if df.empty and len(daily_eau_propre) and len(df_air):
+    # Jointure GAUCHE : aucune journée d'eau n'est perdue ici. L'indicateur
+    # dit lesquelles la station d'air ne couvre pas — c'est exactement ce que
+    # la jointure interne effaçait.
+    complet = daily_eau_propre.merge(df_air, on="date", how="left",
+                                     indicator="_jointure")
+    dans_air = (complet["_jointure"] == "both").to_numpy()
+    complet = complet.drop(columns=["_jointure"])
+
+    # Le message d'erreur est celui de la version antérieure, au caractère
+    # près : « aucun jour commun » se lit sur la jointure interne, que
+    # `dans_air` reproduit sans avoir eu besoin de l'exécuter.
+    if not dans_air.any() and len(daily_eau_propre) and len(df_air):
         e0, e1 = daily_eau_propre["date"].min(), daily_eau_propre["date"].max()
         a0, a1 = df_air["date"].min(), df_air["date"].max()
         raise ValueError(
@@ -95,11 +231,16 @@ def fusionner(daily_eau_propre, df_air, ecart_by_date, normales_lkp,
             f"multi-stations : changez la station sélectionnée ; fichier "
             f"mono-station : il faut une autre station ou une autre période "
             f"de sonde).")
-    df = df.merge(ecart_by_date, on="date", how="left")
-    df["day"]   = pd.to_datetime(df["date"]).dt.day
-    df["month"] = pd.to_datetime(df["date"]).dt.month
-    df = df.merge(normales_lkp, on=["day", "month"], how="left")
-    df = df.dropna(subset=["T_eau_moy", "T_air"])
+    complet = complet.merge(ecart_by_date, on="date", how="left")
+    complet["day"]   = pd.to_datetime(complet["date"]).dt.day
+    complet["month"] = pd.to_datetime(complet["date"]).dt.month
+    complet = complet.merge(normales_lkp, on=["day", "month"], how="left")
+
+    # Ce que l'ancien `dropna(subset=["T_eau_moy", "T_air"])` retirait, dit
+    # comme un masque plutôt que comme une suppression.
+    exploitable = (complet["T_eau_moy"].notna()
+                   & complet["T_air"].notna()).to_numpy()
+    df = complet[exploitable].copy()
     if df.empty:
         raise ValueError(
             "Après fusion eau/air/normales, aucune ligne ne conserve à la "
@@ -108,8 +249,37 @@ def fusionner(daily_eau_propre, df_air, ecart_by_date, normales_lkp,
             "sur la période commune.")
     df["T_air_std"] = df["T_air"] - df["Delta_TMm"]
     df = df.sort_values("date").reset_index(drop=True)
-    df["Tmh"]     = df["T_eau_moy"].rolling(window=7, min_periods=4,
-                                            center=True).mean()
+    # ---- CORRECTIF 8 (D47) — le lissage porte sur l'EAU, toute l'eau -----
+    # Fenêtre de 7 JOURS, et non de 7 lignes (correctif 2). `fenetre=7` et
+    # `min_periods=4` : valeurs de la version antérieure (`core.py:111` de
+    # V4.5), reprises sans modification.
+    #
+    # Le support, lui, change. `Tmh` était lissée sur `df`, c'est-à-dire sur
+    # les seules journées EXPLOITABLES — celles qui ont un air apparié. Une
+    # journée d'eau parfaitement mesurée mais privée d'air y faisait un trou,
+    # et ce trou déplaçait la moyenne de ses voisines. Or `Tmh` est une
+    # moyenne de température d'EAU : elle ne dépend pas de l'air, et ne doit
+    # pas dépendre de la complétude de la série d'air.
+    #
+    # C'est le même défaut que celui du correctif 2, transposé : là, le
+    # lissage dépendait de la position des lignes ; ici, il dépend d'une
+    # complétude qui ne le regarde pas.
+    #
+    # Le lissage s'applique donc à `complet` — toutes les journées retenues
+    # par le contrôle qualité qui portent une température d'eau, appariées ou
+    # non — puis le résultat est ramené sur la vue exploitable. Aucune ligne
+    # n'est ajoutée à `df` : seules les valeurs de `Tmh` changent, et trois
+    # journées du corpus qui n'en avaient pas en reçoivent une.
+    eau_complete = (complet.loc[complet["T_eau_moy"].notna(),
+                                ["date", "T_eau_moy"]]
+                    .sort_values("date"))
+    tmh_eau = pd.Series(
+        moyenne_mobile_calendaire(eau_complete["date"],
+                                  eau_complete["T_eau_moy"],
+                                  fenetre=7, min_periods=4),
+        index=pd.to_datetime(eau_complete["date"].to_numpy()))
+    df["Tmh"] = tmh_eau.reindex(
+        pd.to_datetime(df["date"].to_numpy())).to_numpy()
     # Anomalie d'air LISSÉE sur la même fenêtre que Tmh.
     # La normalisation retranche m × (anomalie d'air) à la température de
     # l'eau. Or Tmh est une moyenne sur 7 jours tandis que Delta_TMm est
@@ -117,15 +287,230 @@ def fusionner(daily_eau_propre, df_air, ecart_by_date, normales_lkp,
     # hebdomadaire lissé injecte du bruit sans fondement physique, l'eau
     # répondant à l'air avec inertie. On aligne donc les deux échelles de
     # temps. La moyenne de la série est inchangée ; seul le bruit disparaît.
-    df["Delta_TMm_liss"] = (df["Delta_TMm"]
-                            .rolling(window=lissage_delta, min_periods=1,
-                                     center=True).mean())
+    # ---- CORRECTIF 9 (D51) — le lissage porte sur l'AIR, tout l'air -------
+    # Même fenêtre calendaire (correctif 2). `min_periods=1` : valeur de la
+    # version antérieure (`core.py:121` de V4.5), reprise sans modification.
+    # Seul le SUPPORT change, comme aux correctifs 2 et 8.
+    #
+    # LE DÉFAUT CORRIGÉ — le miroir du correctif 8.
+    # Cette moyenne portait sur `df`, donc sur les seules journées qui ont
+    # AUSSI une température d'eau. `Delta_TMm_liss` est pourtant une grandeur
+    # d'AIR : elle dépendait d'une complétude qui ne la regarde pas,
+    # exactement comme `Tmh` dépendait de l'air avant le correctif 8. Mesuré
+    # avant correction : 854 valeurs déplacées (1,27 %), sur les 32 points,
+    # écart maximal de 4,790 °C sur l'anomalie et jusqu'à 1,939 °C répercutés
+    # sur `T_norm` — c'est le terme que la normalisation retranche
+    # (`Tmh_norm = Tmh − m × Delta_TMm_liss`), donc le cœur du périmètre.
+    #
+    # LE SUPPORT RETENU — TOUT le calendrier de la station, et non le seul
+    # recouvrement de la chronique d'eau. Les deux se défendaient ; ils ne
+    # diffèrent qu'aux bords de la chronique d'eau, sur 189 valeurs du corpus
+    # dont AUCUNE hors des bords, avec un écart pouvant atteindre 4,276 °C.
+    # Restreindre le support au recouvrement ferait dépendre l'anomalie d'air
+    # d'un jour donné de la date à laquelle une sonde d'eau a commencé ou
+    # cessé d'enregistrer — c'est-à-dire exactement la dépendance que ce
+    # correctif retire. Et `min_periods=1` n'y protège de rien : la fenêtre
+    # tronquée d'un bord rend une moyenne de sept jours calculée sur une
+    # seule, sans le signaler. Sur le corpus, la série d'air couvre la
+    # chronique d'eau sur 32 points sur 32, débordant de 0 à 10 398 jours
+    # avant et de 58 à 5 306 jours après : le support existe partout.
+    _air = ecart_by_date.dropna(subset=["Delta_TMm"]).drop_duplicates("date")
+    _air = _air.sort_values("date")
+    if len(_air):
+        _liss_air = pd.Series(
+            moyenne_mobile_calendaire(_air["date"], _air["Delta_TMm"],
+                                      fenetre=lissage_delta, min_periods=1),
+            index=pd.to_datetime(_air["date"].to_numpy()))
+        df["Delta_TMm_liss"] = _liss_air.reindex(
+            pd.to_datetime(df["date"].to_numpy())).to_numpy()
+    else:
+        # Aucune anomalie d'air exploitable : on retombe sur le comportement
+        # antérieur plutôt que de produire une colonne vide.
+        df["Delta_TMm_liss"] = moyenne_mobile_calendaire(
+            df["date"], df["Delta_TMm"], fenetre=lissage_delta, min_periods=1)
     df["date_dt"] = pd.to_datetime(df["date"])
 
     if df_debits is not None:
         keep = [c for c in ["date", "Q", "Q_inf", "Q_desinf"] if c in df_debits.columns]
         df = df.merge(df_debits[keep], on="date", how="left")
+
+    # ---- La table de marquage : chaque journée lue y subsiste -------------
+    marques = complet.copy()
+    marques["exploitable"] = exploitable
+    marques["statut"] = STATUT_RETENU
+    marques["motifs"] = [[] for _ in range(len(marques))]
+
+    def _marque(masque, motif):
+        """Pose `non_diagnosticable` et AJOUTE le motif, sans écraser."""
+        masque = np.asarray(masque, dtype=bool)
+        for i in np.nonzero(masque)[0]:
+            marques.iat[i, marques.columns.get_loc("motifs")] = \
+                marques.iat[i, marques.columns.get_loc("motifs")] + [motif]
+        marques.loc[marques.index[masque], "statut"] = STATUT_NON_DIAGNOSTICABLE
+        return int(masque.sum())
+
+    # 1) L'air manque — c'est le défaut C6, celui que la jointure interne
+    #    effaçait. La journée d'eau n'a rien de défectueux : elle est
+    #    indiagnosticable, ce qui n'est ni « retenue » ni « écartée ».
+    _marque(~dans_air | (dans_air & complet["T_air"].isna().to_numpy()),
+            MOTIF_AIR_ABSENTE)
+    # 2) L'eau manque alors que le contrôle qualité avait retenu la journée.
+    #    Cause distincte, jamais observée sur le corpus de référence, et qui
+    #    ne doit donc pas être rangée sous le motif précédent.
+    _marque(complet["T_eau_moy"].isna().to_numpy(), MOTIF_EAU_ABSENTE)
+    # 3) D45 — la densité calendaire. Les journées exploitables que le
+    #    correctif 2 laisse sans `Tmh`.
+    if len(df):
+        sans_tmh = set(df.loc[df["Tmh"].isna(), "date"])
+        if sans_tmh:
+            _marque(complet["date"].isin(sans_tmh).to_numpy(),
+                    motif_densite(7, 4))
+
+    # `motif` = le PREMIER motif, même convention qu'en `qc.py` : la vue
+    # héritée ne doit rien apprendre d'une chaîne jointe.
+    marques["motif"] = marques["motifs"].apply(lambda ms: ms[0] if ms else "")
+    return df, marques
+
+
+def vue_exploitable(marques):
+    """
+    Les lignes de la table de marquage qui sont entrées dans la chaîne.
+
+    C'est le MÊME jeu de journées que le `df` rendu par `fusionner`, mais tel
+    qu'il se présente avant calcul : sans `Tmh`, sans `T_air_std`, sans les
+    colonnes de débits. Destinée au périmètre, qui a parfois besoin de
+    confronter les deux.
+
+    La vue que l'aval hors périmètre reçoit reste le `df` de `fusionner`, et
+    elle ne présente QUE des journées exploitables : un consommateur qui
+    recevrait soudain des lignes à `T_air` vide serait une régression, non un
+    progrès.
+    """
+    return marques[marques["exploitable"]]
+
+
+def non_diagnosticables_fusion(marques):
+    """
+    Les journées que la fusion n'a pas pu exploiter, avec leur motif.
+
+    Destinée au PÉRIMÈTRE — le harnais, et le bloc de dégradation déclarée de
+    l'écran. Aucun appelant historique ne la reçoit.
+    """
+    d = marques[marques["statut"] == STATUT_NON_DIAGNOSTICABLE].copy()
+    d["motifs_complets"] = d["motifs"].apply(lambda ms: SEP_MOTIFS.join(ms))
+    d["n_motifs"] = d["motifs"].apply(len)
+    return d
+
+
+def fusionner(daily_eau_propre, df_air, ecart_by_date, normales_lkp,
+              df_debits=None, lissage_delta=7):
+    """
+    ADAPTATEUR — signature et valeur de retour inchangées.
+
+    Fusionne eau (nettoyée) + air + normales (+ débits déjà fusionnés).
+    Calcule T_air_std, Tmh (moy. mobile 7j) et prépare les colonnes d'analyse.
+
+    Le marquage des journées inexploitables est obtenu par
+    `fusionner_marque()`, dont cette fonction n'est que la première moitié du
+    retour. Aucun appelant historique n'a besoin de savoir qu'il existe.
+    """
+    df, _marques = fusionner_marque(daily_eau_propre, df_air, ecart_by_date,
+                                    normales_lkp, df_debits=df_debits,
+                                    lissage_delta=lissage_delta)
     return df
+
+
+# ------------------------------------------------------------------
+# CORRECTIF 6 — LA RÈGLE DE VALIDITÉ DU COEFFICIENT DE COUPLAGE
+# ------------------------------------------------------------------
+# Spécification §2. Deux conditions en conjonction, aucune valeur à calibrer :
+#
+#   1. l'IC à 95 % de la pente, avec écarts-types robustes à
+#      l'autocorrélation (Newey-West), EXCLUT ZÉRO ;
+#   2. la pente est dans [0 ; 1,2].
+#
+# Elle s'applique aux DEUX coefficients — `m_estival` et `m_saisonnier` — et
+# PAR ESPÈCE sur le saisonnier (D28). Un rejet met le coefficient à ZÉRO, donc
+# `T_norm = T` : la normalisation n'est pas refusée, elle est neutralisée
+# (D33). Les températures publiées sont alors les températures brutes.
+#
+# POURQUOI NEWEY-WEST, ET AVEC QUEL DÉCALAGE
+# -------------------------------------------
+# Les résidus d'une régression sur une chronique journalière sont
+# autocorrélés : une journée chaude suit une journée chaude. L'écart-type OLS
+# ordinaire les traite comme indépendants et sous-estime donc l'incertitude,
+# parfois d'un facteur important. Newey-West corrige cela sans rien supposer
+# de la forme de l'autocorrélation.
+#
+# Le décalage maximal retenu est `L = ⌊4 (n/100)^(2/9)⌋`, avec le noyau de
+# Bartlett. *Provenance : convention statistique usuelle de la littérature
+# économétrique pour le choix automatique du décalage — elle ne dépend que de
+# `n` et ne se calibre sur aucun jeu de données.* Le niveau de 95 % est celui
+# de tout intervalle de confiance.
+M_DOMAINE = (0.0, 1.2)
+M_NIVEAU_IC = 0.95
+_Z_IC95 = 1.959963984540054      # quantile normal bilateral a 95 %
+
+
+def ic95_newey_west(x, y):
+    """
+    Pente OLS et demi-largeur de son IC à 95 % avec écarts-types HAC.
+
+    Retourne `(pente, demi_largeur, erreur_type, t, n, lag)`. La PENTE est
+    strictement celle de l'OLS — la même que `stats.linregress` — de sorte que
+    le correctif ne change aucune estimation : seule l'INCERTITUDE autour
+    d'elle est estimée autrement, et elle seule sert au verdict.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    ok = np.isfinite(x) & np.isfinite(y)
+    x, y = x[ok], y[ok]
+    n = len(x)
+    if n < 3 or np.ptp(x) == 0:
+        return np.nan, np.nan, np.nan, np.nan, n, 0
+
+    X = np.column_stack([np.ones(n), x])
+    XtX_inv = np.linalg.pinv(X.T @ X)
+    beta = XtX_inv @ (X.T @ y)
+    resid = y - X @ beta
+
+    lag = max(int(np.floor(4.0 * (n / 100.0) ** (2.0 / 9.0))), 0)
+    u = X * resid[:, None]
+    S = u.T @ u
+    for l in range(1, lag + 1):
+        w = 1.0 - l / (lag + 1.0)              # noyau de Bartlett
+        G = u[l:].T @ u[:-l]
+        S += w * (G + G.T)
+    V = XtX_inv @ S @ XtX_inv
+    se = float(np.sqrt(max(V[1, 1], 0.0)))
+    pente = float(beta[1])
+    demi = _Z_IC95 * se
+    t = pente / se if se > 0 else np.nan
+    return pente, demi, se, t, n, lag
+
+
+def verdict_validite(pente, demi_largeur):
+    """
+    Le verdict, et le critère qui rejette quand il y a rejet (C4).
+
+    Aucune valeur à calibrer : le domaine vient de la règle déjà écrite dans
+    V4.5 pour le seul coefficient saisonnier, et le niveau de 95 % est une
+    convention.
+    """
+    fini = bool(np.isfinite(pente) and np.isfinite(demi_largeur))
+    exclut_zero = bool(fini and abs(pente) > demi_largeur)
+    dans_domaine = bool(np.isfinite(pente)
+                        and M_DOMAINE[0] <= pente <= M_DOMAINE[1])
+    motifs = []
+    if not exclut_zero:
+        motifs.append("l'IC a 95 % contient zero")
+    if not dans_domaine:
+        motifs.append(f"la pente sort du domaine "
+                      f"[{M_DOMAINE[0]} ; {M_DOMAINE[1]}]")
+    return dict(valide=bool(exclut_zero and dans_domaine),
+                ic95_exclut_zero=exclut_zero,
+                pente_dans_domaine=dans_domaine,
+                critere_rejetant=" et ".join(motifs))
 
 
 # ============================================================
@@ -155,11 +540,28 @@ def analyse_sensibilite(df):
     r2 = r_value ** 2
     robustesse = abs(r_spearman - r_pearson)
 
+    # ---- CORRECTIF 6 — la regle de validite, appliquee a m_estival --------
+    # La pente reste celle de l'OLS ; seule son incertitude est estimee
+    # autrement. Un rejet met le coefficient a ZERO (D33) : la chaine
+    # continue de tourner, et `T_norm = T`.
+    _p_nw, demi, se_nw, t_nw, n_nw, lag_nw = ic95_newey_west(x, y)
+    v = verdict_validite(slope, demi)
+    m_retenu = float(slope) if v["valide"] else 0.0
+
     return dict(
-        m=slope, intercept=intercept, r_main=r_main, p_main=p_main,
+        m=m_retenu, m_estime=float(slope),
+        validite=v["valide"],
+        validite_ic95_exclut_zero=v["ic95_exclut_zero"],
+        validite_pente_dans_domaine=v["pente_dans_domaine"],
+        validite_critere_rejetant=v["critere_rejetant"],
+        ic95_demi_largeur=demi, erreur_type_newey_west=se_nw,
+        t_newey_west=t_nw, lag_newey_west=lag_nw,
+        intercept=intercept, r_main=r_main, p_main=p_main,
         r_pearson=r_pearson, p_pearson=p_pearson,
         r_spearman=r_spearman, p_spearman=p_spearman,
         r2=r2, p_reg=p_reg, test_used=test_used, p_x=p_x, p_y=p_y,
+        # La categorie decrit la pente ESTIMEE : dire « Resilience
+        # Elevee » parce qu'on a impose zero serait un contresens.
         sens_cat=interprete_sensibilite(slope), r2_cat=interprete_r2(r2),
         robustesse=robustesse, rob_cat=interprete_robustesse(robustesse),
         n=len(df_ete), df_ete=df_ete,
@@ -240,6 +642,17 @@ def cat_fraie_sev(sev_moy, pct_letal):
     return libelles[P], P
 
 
+# D78 — LE SEUIL DE VINGT JOURS, UNE SEULE FOIS.
+# Il etait ecrit TROIS fois : le garde-fou ci-dessous, le message du journal,
+# et — depuis D67 — le motif du statut `replie`. Trois ecritures d'un meme
+# nombre sont trois occasions de le changer a deux endroits sur trois.
+#
+# En deca de cet effectif, il n'y a pas de quoi estimer une incertitude, donc
+# pas de quoi appliquer la regle de validite du correctif 6 : le coefficient
+# saisonnier se replie sur l'estival, et le declare (D67).
+N_MIN_M_SAISONNIER = 20
+
+
 def _m_saisonnier(df, mois, m_estival, verbose=True):
     """
     Recalcule le coefficient de couplage air-eau sur la fenêtre saisonnière
@@ -248,21 +661,72 @@ def _m_saisonnier(df, mois, m_estival, verbose=True):
     avec signalement (note §2.6bis).
     """
     sub = df[df["month"].isin(mois)].dropna(subset=["T_eau_moy", "T_air"])
-    if len(sub) < 20:
+    # Le repli sur `m_estival` faute d'effectif est CONSERVE INCHANGE (C3) :
+    # c'est le seul cas de repli qui subsiste. En deca de vingt jours, il n'y
+    # a pas de quoi estimer une incertitude, donc pas de quoi appliquer la
+    # regle de validite.
+    if len(sub) < N_MIN_M_SAISONNIER:
         if verbose:
-            print(f"      ⚠️  m_saison : n={len(sub)} < 20 → repli sur m estival "
-                  f"({m_estival:.3f})")
-        return m_estival, dict(source="estival_repli", n=len(sub), r2=np.nan, m=m_estival)
+            print(f"      ⚠️  m_saison : n={len(sub)} < {N_MIN_M_SAISONNIER} "
+                  f"→ repli sur m estival ({m_estival:.3f})")
+        # ---- D67 — un repli se DECLARE ---------------------------------
+        # `validite=None` disait « la regle de validite ne s'applique pas » :
+        # c'est exact, elle exige une incertitude estimable et sept jours n'en
+        # donnent pas. Mais le lecteur du livrable, lui, recevait une colonne
+        # de statut VIDE, qui ne distingue pas « non juge » de « rien a
+        # signaler ». Or il y a quelque chose a signaler : le coefficient
+        # publie pour cette fenetre n'est PAS celui de cette fenetre, c'est
+        # celui de l'ete.
+        #
+        # Le statut et son motif sont produits ICI, par le code qui connait le
+        # seuil. Les faire composer par le harnais aurait ete une compensation
+        # du harnais — le defaut releve a l'etape 7.
+        #
+        # AUCUNE VALEUR NE CHANGE : `m_estival` est retourne a l'identique et
+        # le journal ci-dessus n'est pas touche. Seules deux colonnes de
+        # 06_coefficients.csv, jusqu'ici vides, se remplissent.
+        return m_estival, dict(source="estival_repli", n=len(sub), r2=np.nan,
+                               m=m_estival, validite=None,
+                               statut="replie",
+                               critere_rejetant=(
+                                   f"effectif insuffisant sur la fenetre "
+                                   f"(n={len(sub)} < {N_MIN_M_SAISONNIER}) "
+                                   f"— repli sur "
+                                   f"m_estival"))
     sl, ic, r, p, _ = stats.linregress(sub["T_air"], sub["T_eau_moy"])
     r2 = r ** 2
-    if r2 < 0.30 or not (0.0 <= sl <= 1.2):
+
+    # ---- CORRECTIF 6 — la regle de validite remplace le garde-fou ---------
+    # L'ancien garde-fou etait `r2 < 0.30 or not (0 <= sl <= 1.2)`, et il
+    # repliait sur `m_estival`. Deux choses changent.
+    #
+    # Le SEUIL de R2 disparait : la specification ne le porte pas. Un R2
+    # faible sur un grand echantillon n'invalide pas une pente — il dit que
+    # l'air explique peu de la variance, pas que le couplage est indistinct
+    # de zero. C'est ce que l'IC mesure, et lui seul.
+    #
+    # Le REPLI disparait aussi : un coefficient rejete vaut ZERO (D33), il ne
+    # prend pas la valeur d'un autre. Se rabattre sur `m_estival` faisait
+    # normaliser la fenetre de fraie avec le couplage de l'ete, ce qui est une
+    # substitution silencieuse, non un garde-fou.
+    _p, demi, se, t, _n, lag = ic95_newey_west(sub["T_air"], sub["T_eau_moy"])
+    v = verdict_validite(sl, demi)
+    if not v["valide"]:
         if verbose:
-            print(f"      ⚠️  m_saison={sl:.3f} (R²={r2:.2f}) non fiable "
-                  f"→ repli sur m estival ({m_estival:.3f})")
-        return m_estival, dict(source="estival_repli", n=len(sub), r2=r2, m=sl)
+            print(f"      ⚠️  m_saison={sl:.3f} REJETE ({v['critere_rejetant']}) "
+                  f"→ m = 0, T_norm = T")
+        return 0.0, dict(source="rejet_validite", n=len(sub), r2=r2, m=sl,
+                         validite=False, ic95_demi_largeur=demi,
+                         erreur_type_newey_west=se, t_newey_west=t,
+                         lag_newey_west=lag,
+                         critere_rejetant=v["critere_rejetant"])
     if verbose:
-        print(f"      m_saison={sl:.3f} (R²={r2:.2f}, n={len(sub)}) retenu")
-    return sl, dict(source="saisonnier", n=len(sub), r2=r2, m=sl)
+        print(f"      m_saison={sl:.3f} (R²={r2:.2f}, n={len(sub)}, "
+              f"t={t:.2f}) retenu")
+    return sl, dict(source="saisonnier", n=len(sub), r2=r2, m=sl,
+                    validite=True, ic95_demi_largeur=demi,
+                    erreur_type_newey_west=se, t_newey_west=t,
+                    lag_newey_west=lag, critere_rejetant="")
 
 
 def _severite_fraie(tmh, opt_min, opt_max, elargie_min, elargie_max,

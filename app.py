@@ -18,9 +18,29 @@ from thermie_debits.config import (AnalyseConfig, SourcesConfig, QCConfig,
                                     VERSION_NOTES)
 from thermie_debits.orchestrator import run
 from thermie_debits import figures as figmod
+from thermie_debits import redaction as red
 
 st.set_page_config(page_title="Thermie & Débits de référence",
                    page_icon="🌡️", layout="wide")
+
+# ---- CORRECTIF 7 (D22) — les défauts de l'interface se DÉRIVENT ----------
+# Un défaut écrit en littéral n'est pas fautif en soi : il l'est parce qu'il
+# rompt le lien. Le jour où le dataclass change, le défaut de l'interface ne
+# suit pas, et la valeur documentée cesse d'être la valeur appliquée — sans
+# qu'aucun test ne le dise. C'est arrivé deux fois, sur le seuil du détecteur
+# hors d'eau (10,0 contre 4,0) et sur l'exclusion de saison (False contre
+# True), et personne ne l'a vu pendant deux versions.
+#
+# Ces deux instances sont les SEULES références de défaut de l'interface.
+# Elles ne sont jamais modifiées : `qc` (construit plus bas) est l'objet que
+# l'opérateur ajuste, celles-ci restent la vérité du code.
+_DEFAUTS = AnalyseConfig()
+_SOURCES = SourcesConfig()
+
+# Les options du sélecteur de mode, nommées pour que le défaut s'y INDEXE au
+# lieu de s'y compter. Un défaut par position dépend de l'ordre d'une liste ;
+# réordonner la liste changerait le défaut sans que rien ne le signale.
+_MODES = ["thermie_seule", "thermie_debits"]
 
 
 def _save_upload(uploaded):
@@ -69,14 +89,21 @@ up_deb_des = st.sidebar.file_uploader("Débit désinfluencé (optionnel)", type=
 st.sidebar.header("2. Contexte & mode")
 contexte_key = st.sidebar.selectbox(
     "Contexte piscicole", options=list(CONTEXTES.keys()),
-    format_func=lambda k: CONTEXTES[k]["label"], index=1)
+    format_func=lambda k: CONTEXTES[k]["label"],
+    index=list(CONTEXTES).index(_DEFAUTS.contexte_piscicole))
 
 # --- Espèce repère : arbitrage explicite là où plusieurs espèces sont
 # admissibles pour une même zonation SANDRE (zone intermédiaire).
 _especes = especes_disponibles(contexte_key)
 if len(_especes) > 1:
+    # Le dataclass dit `espece_repere = None`, qui RÉSOUT vers l'espèce par
+    # défaut du contexte (config.py, contexte()). C'est donc cette résolution
+    # qu'on indexe, et non la position 0 — laquelle coïncidait seulement parce
+    # que `especes_disponibles` place l'espèce par défaut en tête.
+    _esp_defaut = CONTEXTES[contexte_key].get("espece_defaut")
     espece_repere = st.sidebar.radio(
-        "Espèce repère", options=_especes, index=0,
+        "Espèce repère", options=_especes,
+        index=_especes.index(_esp_defaut) if _esp_defaut in _especes else 0,
         help="La zonation SANDRE intermédiaire admet deux espèces repères "
              "thermiques. Le choix détermine les seuils estivaux, le plancher "
              "de classe et la fenêtre de reproduction — il change donc les "
@@ -93,27 +120,30 @@ st.sidebar.caption(
 if _p.get("src_seuils"):
     st.sidebar.caption(f"Sources : {_p['src_seuils']}")
 mode = st.sidebar.radio(
-    "Mode d'analyse", options=["thermie_seule", "thermie_debits"],
+    "Mode d'analyse", options=_MODES,
     format_func=lambda m: {"thermie_seule": "Thermie seule (SGVT, sans débit)",
                            "thermie_debits": "Thermie + débits de référence"}[m],
-    index=1)
+    index=_MODES.index(_DEFAUTS.mode))
 if mode == "thermie_seule" and (up_deb or up_deb_des):
     st.sidebar.caption("ℹ️ Fichiers de débit chargés mais ignorés — mode "
                        "« Thermie seule » sélectionné.")
 
 with st.sidebar.expander("📐 Calcul des normales (avancé)"):
-    norm_fenetre = st.slider("Lissage des normales (± jours)", 3, 20, 10, 1)
-    norm_min_ans = st.number_input("Années minimum sur 1991–2020", 5, 30, 20)
+    norm_fenetre = st.slider("Lissage des normales (± jours)", 3, 20,
+                             _DEFAUTS.normales_fenetre_lissage, 1)
+    norm_min_ans = st.number_input("Années minimum sur 1991–2020", 5, 30,
+                                   _DEFAUTS.normales_min_annees)
     liss_delta = st.slider(
-        "Lissage de l'anomalie d'air pour la compensation (jours)", 1, 15, 7, 1,
-        help="La compensation retranche m × (anomalie d'air) à la température "
+        "Lissage de l'anomalie d'air pour la normalisation (jours)", 1, 15,
+        _DEFAUTS.normalisation_lissage_delta, 1,
+        help="La normalisation retranche m × (anomalie d'air) à la température "
              "de l'eau. Comme Tmh est une moyenne sur 7 jours et que l'eau "
              "répond à l'air avec inertie, l'anomalie est lissée sur la même "
              "fenêtre : les deux termes sont alors à la même échelle de temps. "
              "Mettre 1 pour revenir à l'anomalie journalière (série beaucoup "
              "plus bruitée).")
 
-seuil_comblement = 0.10
+seuil_comblement = _DEFAUTS.seuil_comblement_desinf
 if mode == "thermie_debits":
     ajuster_comblement = st.sidebar.checkbox(
         "Ajuster le seuil de comblement désinfluencé (avancé)", False,
@@ -127,29 +157,35 @@ if mode == "thermie_debits":
              "grande majorité des cas.")
     if ajuster_comblement:
         seuil_comblement = st.sidebar.slider(
-            "Seuil comblement désinfluencé (écart médian max)", 0.0, 0.30, 0.10, 0.01)
+            "Seuil comblement désinfluencé (écart médian max)", 0.0, 0.30,
+            _DEFAUTS.seuil_comblement_desinf, 0.01)
     with st.sidebar.expander("🎚️ Déclenchement du volet stress (avancé)"):
         st.caption("Le volet létal déclenche toujours Q_thermie_bio. Le volet "
                    "stress chronique n'est retenu que si le stress est matériel "
                    "ET réellement piloté par le débit.")
         stress_plancher = st.slider("Plancher de matérialité (% jours stressés)",
-                                    0.0, 40.0, 10.0, 1.0,
+                                    0.0, 40.0, _DEFAUTS.stress_plancher_pct, 1.0,
                                     help="En deçà, le milieu ne révèle pas de "
                                          "vulnérabilité chronique : volet écarté.")
         stress_r2 = st.slider("R² minimal de la relation débit↔température",
-                              0.0, 0.60, 0.10, 0.01,
+                              0.0, 0.60, _DEFAUTS.stress_corr_r2_min, 0.01,
                               help="La corrélation doit aussi être négative "
                                    "(l'eau chauffe quand le débit baisse).")
 else:
-    stress_plancher, stress_r2 = 10.0, 0.10
+    stress_plancher = _DEFAUTS.stress_plancher_pct
+    stress_r2 = _DEFAUTS.stress_corr_r2_min
 
-faire_clim = st.sidebar.checkbox("Inclure le volet climatique", False)
+faire_clim = st.sidebar.checkbox("Inclure le volet climatique",
+                                 _DEFAUTS.faire_volet_climatique)
 
 st.sidebar.header("3. Métadonnées")
-nom_ce = st.sidebar.text_input("Nom du cours d'eau", "Cours d'eau")
-loc_sonde = st.sidebar.text_input("Localisation de la sonde", "")
-nom_station = st.sidebar.text_input("Station hydrométrique de référence", "")
-nom_station_meteo = st.sidebar.text_input("Station Météo-France de référence", "")
+nom_ce = st.sidebar.text_input("Nom du cours d'eau", _SOURCES.nom_cours_eau)
+loc_sonde = st.sidebar.text_input("Localisation de la sonde",
+                                  _SOURCES.localisation_sonde)
+nom_station = st.sidebar.text_input("Station hydrométrique de référence",
+                                    _SOURCES.nom_station_debit)
+nom_station_meteo = st.sidebar.text_input("Station Météo-France de référence",
+                                          _SOURCES.nom_station_meteo)
 
 # --- QC avancé ---
 with st.sidebar.expander("⚙️ Contrôle qualité (avancé)"):
@@ -159,11 +195,29 @@ with st.sidebar.expander("⚙️ Contrôle qualité (avancé)"):
     qc.t_eau_min = c1.number_input("T_eau min (°C)", value=qc.t_eau_min, step=0.5)
     qc.t_eau_max = c2.number_input("T_eau max (°C)", value=qc.t_eau_max, step=0.5)
     qc.hors_eau = st.checkbox("Détection sonde hors d'eau", qc.hors_eau)
-    qc.hors_eau_ecart_seuil = st.slider("Écart hors d'eau seuil (°C)", 1.0, 15.0,
-                                        10.0, 0.5)
-    qc.hors_eau_min_jours = st.number_input("Jours suspects min",
-                                            value=qc.hors_eau_min_jours, step=1)
-    qc.hors_eau_exclut_saison = st.checkbox("Exclure la saison JJAS entière", False)
+    # CORRECTIF 1 — le seuil absolu en °C et l'exclusion de saison ont
+    # disparu ; le detecteur est relatif. Chaque widget prend son defaut du
+    # DATACLASS et non d'un litteral : c'est la regle du correctif 7,
+    # appliquee d'emblee aux widgets nouveaux.
+    qc.k = st.slider("Seuil du détecteur (k × MAD*)", 1.0, 6.0, qc.k, 0.5,
+                     help="Nombre d'écarts-types robustes au-delà duquel une "
+                          "journée est marquée. 3,0 = aberration à trois "
+                          "écarts-types.")
+    qc.plancher_dispersion = st.number_input(
+        "Plancher de dispersion (°C)", value=qc.plancher_dispersion, step=0.01,
+        help="Sous cette dispersion mensuelle, le détecteur s'abstient.")
+    qc.min_jours_groupe = st.number_input(
+        "Jours minimum dans le mois", value=qc.min_jours_groupe, step=1,
+        help="En deçà, une médiane et un MAD ne décrivent rien.")
+    qc.min_jours_episode = st.number_input(
+        "Longueur minimale d'épisode (jours)", value=qc.min_jours_episode,
+        step=1, help="1 = aucune journée écartée sur la longueur de son "
+                     "épisode ; la longueur reste publiée.")
+    qc.q_ampl = st.slider("Quantile du garde-fou d'amplitude d'air", 0.0, 0.5,
+                          qc.q_ampl, 0.05,
+                          help="Marche 2 : sous ce quantile de l'amplitude "
+                               "d'air du jeu, le rapport de formes n'a rien "
+                               "à comparer.")
     qc.plateau = st.checkbox("Détection plateau (sonde bloquée)", qc.plateau)
     qc.mad_outliers = st.checkbox("Outliers MAD", qc.mad_outliers)
     qc.mad_k = st.slider("Seuil MAD (k × MAD)", 10.0, 100.0, qc.mad_k, 5.0)
@@ -194,8 +248,10 @@ with st.sidebar.expander("📅 Période affichée (optionnelle)"):
                "chroniques (Synthèse, QC, Vulnérabilité) — les calculs "
                "(SGVT, vulnérabilité, débits) portent toujours sur la "
                "chronique complète.")
-    restreindre_periode = st.checkbox("Fixer une période d'affichage", False,
-                                      key="restreindre_periode")
+    # La case est cochée si et seulement si le dataclass porte une fenêtre.
+    restreindre_periode = st.checkbox(
+        "Fixer une période d'affichage",
+        _DEFAUTS.periode_affichage is not None, key="restreindre_periode")
     periode_affichage = None
     if restreindre_periode:
         c1, c2 = st.columns(2)
@@ -316,6 +372,10 @@ if lancer:
         st.error(msg); st.stop()
     src = SourcesConfig(
         fichier_eau=_save_upload(up_eau), fichier_air=_save_upload(up_air),
+        # INVARIANT, et non un défaut (D22) : le chemin application calcule
+        # toujours ses normales depuis l'air brut. La branche EcartNormales
+        # pré-calculé (orchestrator.py) reste atteignable par la CLI, et
+        # AUCUN jeu du corpus ne l'exerce — signalé, non corrigé.
         fichier_normales=None,
         fichier_debit=_save_upload(up_deb) if (up_deb and mode == "thermie_debits") else None,
         fichier_debit_desinf=_save_upload(up_deb_des) if (up_deb_des and mode == "thermie_debits") else None,
@@ -337,7 +397,11 @@ if lancer:
                         normalisation_lissage_delta=liss_delta,
                         stress_plancher_pct=stress_plancher,
                         stress_corr_r2_min=stress_r2,
-                        periode_affichage=periode_affichage, output_dir=None)
+                        periode_affichage=periode_affichage,
+                        # INVARIANT, et non un défaut : l'application n'écrit
+                        # jamais sur disque. Le dériver du dataclass la ferait
+                        # écrire le jour où celui-ci porterait un chemin.
+                        output_dir=None)
     with st.spinner("Analyse en cours..."):
         try:
             res = run(cfg, verbose=False)
@@ -388,8 +452,8 @@ elif dn.get("source"):
     st.caption(f"📐 Normales : {dn['source']}")
 
 # --- Onglets ---
-noms = ["📊 Synthèse", "🧹 QC", "📈 Sensibilité", "🌡️ Vulnérabilité", "🐟 Fraie",
-        "📉 Indicateurs"]
+noms = ["📊 Synthèse", "🔎 Ce qui a été vérifié", "🧹 QC", "📈 Sensibilité",
+        "🌡️ Vulnérabilité", "🐟 Fraie", "📉 Indicateurs"]
 if res.config.avec_debits:
     noms.append("🔗 Relation Q–T°")
     noms.append("💧 Débits")
@@ -439,7 +503,28 @@ with ong[0]:
         st.pyplot(fig_chron)
         _fig_download(fig_chron, "⬇️ PNG chronique", "Chronique_Thermique.png")
 
+# --- D48 — LE BLOC UNIQUE DES ÉTATS DÉCLARÉS ------------------------------
+# Un contrôle silencieusement désactivé sur un jeu pauvre est plus dangereux
+# qu'un contrôle absent : il produit une attestation au lieu d'une alerte.
+# Chaque contrôle rend donc un bloc, MÊME quand il n'a rien trouvé, et son
+# niveau distingue « rien à signaler » de « n'a pas pu se prononcer ».
 with ong[1]:
+    st.subheader("Ce qui a été vérifié, et ce qui ne l'a pas été")
+    _niv, _resume = red.resume_etats(res)
+    {"alerte": st.warning, "reserve": st.info,
+     "verifie": st.success}[_niv](_resume)
+    st.caption("Chaque contrôle figure ci-dessous, y compris ceux qui n'ont "
+               "rien trouvé. Un contrôle absent de cette liste serait un "
+               "contrôle dont on ne saurait pas s'il a tourné.")
+    st.divider()
+    _icone = {"alerte": "⛔", "reserve": "○", "verifie": "✓"}
+    for _b in red.etats_declares(res):
+        st.markdown(f"#### {_icone[_b['niveau']]} {_b['titre']}")
+        for _l in _b["lignes"]:
+            st.markdown(_l)
+        st.write("")
+
+with ong[2]:
     st.subheader("Contrôle qualité — artefacts écartés")
     rq = res.rapport_qc
     if rq is not None and len(rq):
@@ -455,9 +540,12 @@ with ong[1]:
                            rq.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
                            "rapport_qualite.csv", "text/csv")
     else:
-        st.success("Aucun artefact détecté.")
+        st.success("Aucun détecteur n'a écarté d'enregistrement.")
+        st.caption("Ce que cela signifie exactement — quels contrôles ont "
+                   "tourné, ce qu'ils ont examiné et ce qu'ils ne voient pas — "
+                   "est à l'onglet « Ce qui a été vérifié ».")
 
-with ong[2]:
+with ong[3]:
     s = res.sensibilite
     c1, c2, c3 = st.columns(3)
     c1.metric("Pente m", f"{s['m']:.3f}", s["sens_cat"])
@@ -467,7 +555,7 @@ with ong[2]:
         st.pyplot(res.figures["sensibilite"])
         _fig_download(res.figures["sensibilite"], "⬇️ PNG sensibilité", "Sensibilite.png")
 
-with ong[3]:
+with ong[4]:
     v = res.vulnerabilite
     c1, c2 = st.columns(2)
     c1.metric(f"Stress chronique (>{v['seuil_chr']}°C)", f"{v['pct_chr']:.1f}%", v["cat_chr"])
@@ -479,7 +567,7 @@ with ong[3]:
         st.pyplot(fig_vuln_live)
         _fig_download(fig_vuln_live, "⬇️ PNG vulnérabilité", "Vulnerabilite.png")
 
-with ong[4]:
+with ong[5]:
     fr = res.fraie
     if fr is None:
         st.info("Pas de composante fraie pour ce contexte.")
@@ -548,7 +636,7 @@ with ong[4]:
                       "% létal (brut)": f"{si['pct_letal_brut']:.0f}"}
                      for si in fr.get("sous_indicateurs", []) if si.get("evalue")]
         if rows_brut:
-            with st.expander("🌡️ Températures brutes non compensées (information)"):
+            with st.expander("🌡️ Températures brutes, non normalisées (information)"):
                 st.caption("Ces valeurs n'entrent pas dans le score. Elles "
                            "montrent ce qu'ont réellement subi les stades "
                            "précoces sur la période observée, sans "
@@ -582,10 +670,11 @@ with ong[4]:
 # Indicateurs
 if "📉 Indicateurs" in noms and res.indicateurs is not None:
     with ong[noms.index("📉 Indicateurs")]:
-        st.subheader("Indicateurs thermiques — bruts et compensés")
-        st.caption("Compensé = ramené aux conditions normales (écart aux "
-                   "normales 1991–2020 retiré). Amplitude nycthémérale = "
-                   "écart Tmax−Tmin journalier (variation jour/nuit).")
+        st.subheader("Indicateurs thermiques bruts")
+        st.caption("Températures observées, sans correction climatique — les "
+                   "températures normalisées sont à l'onglet Vulnérabilité. "
+                   "Amplitude nycthémérale = écart Tmax−Tmin journalier "
+                   "(variation jour/nuit).")
         table = res.indicateurs["table_mensuelle"]
         st.dataframe(table, use_container_width=True, height=380)
         st.download_button(

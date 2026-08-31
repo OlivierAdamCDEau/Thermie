@@ -160,7 +160,12 @@ def exporter_synthese_xlsx(sens, vul, sgvt, contexte, nom, localisation, output_
             row_data(r, "        · [info] temperatures brutes",
                      f"opt {s['pct_optimum_brut']:.0f}% / élargie "
                      f"{s['pct_elargie_brut']:.0f}% / létal {s['pct_letal_brut']:.0f}%",
-                     "non compensées", "—", "—", "F4F6F7"); r += 1
+                     # D74 — l'opposé de ces pourcentages bruts est
+                     # `Tmh_norm_fraie`, une NORMALISATION (coefficient
+                     # saisonnier, anomalie lissée). Le mot « compensée » a
+                     # designe une autre formule jusqu'au correctif 4, qui l'a
+                     # retiree.
+                     "non normalisées", "—", "—", "F4F6F7"); r += 1
 
     ncomp = sg.get("composantes", 3)
     hdr(r, 1, f"SGVT — information d'appoint ({ncomp} composantes)", "6C3483", span=5); r += 1

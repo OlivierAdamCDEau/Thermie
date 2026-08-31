@@ -31,17 +31,31 @@ def _parse_dates_sonde(serie):
     return best
 
 
-def charger_eau(fichier_eau, col_date=None, col_temp=None, nom="",
-                feuille=None, ligne_entete=None, retour_sous_quotidien=False):
+def marquer_lecture(fichier_eau, col_date=None, col_temp=None, nom="",
+                    feuille=None, ligne_entete=None,
+                    retour_sous_quotidien=False):
     """Charge une chronique de sonde thermique → daily (T_eau_moy/max/min).
 
     Détection robuste (CSV/Excel, séparateur, encodage, colonnes, en-tête
     décalé) via sniff. Les paramètres col_date / col_temp / feuille /
     ligne_entete permettent un override manuel (mapping app).
 
-    Si retour_sous_quotidien=True, retourne (daily, sub) où `sub` conserve les
-    mesures infra-journalières (datetime, T_eau) — utile pour l'amplitude
-    nycthémérale et les indicateurs.
+    Si retour_sous_quotidien=True, retourne (daily, sub, marques_lecture) ;
+    sinon (daily, marques_lecture). `sub` conserve les mesures
+    infra-journalières (datetime, T_eau) — utile pour l'amplitude nycthémérale
+    et les indicateurs.
+
+    CORRECTIF 10 (D60) — `marques_lecture` nomme les mesures que la lecture
+    écarte : une ligne par mesure, avec sa cause. La vue héritée
+    `charger_eau` retire cette table et rend exactement ce que la fonction
+    rendait avant le correctif.
+
+    MESURÉ AVANT LA POSE : sur les 1 694 252 mesures du corpus, cette
+    suppression en concerne **zéro**, sur 32 points sur 32
+    (`out/etape13/P4_dropna_par_point.csv`). Le défaut est réel dans le code
+    et jamais exercé sur ce corpus — comme `qc.py:32-36` à l'étape 5. Le
+    correctif est de robustesse, pas de résultat, et cela se déclare plutôt
+    que de se découvrir.
     """
     from .sniff import lire_brut, deviner_colonnes
     if not nom and isinstance(fichier_eau, str):
@@ -95,7 +109,42 @@ def charger_eau(fichier_eau, col_date=None, col_temp=None, nom="",
         df_w[col_temp].astype(str).str.replace(",", ".").str.replace(" ", ""),
         errors="coerce")
     df_w["date"] = df_w["datetime"].dt.date
-    df_w = df_w.dropna(subset=["date", "T_eau"])
+
+    # ---- CORRECTIF 10 (D60) — la suppression est NOMMEE ------------------
+    # `df_w.dropna(subset=["date", "T_eau"])` ecartait ici des mesures
+    # infra-journalieres sans compte, sans date et sans cause. C'etait la
+    # derniere suppression silencieuse du perimetre. Le filtre lui-meme ne
+    # change pas d'un iota : les memes lignes partent, aux memes endroits.
+    # Ce qui change est qu'elles laissent une trace.
+    #
+    # DEUX CAUSES, ET ELLES NE SE COMPTENT PAS PAREIL.
+    # Une mesure dont la TEMPERATURE est illisible garde sa date : elle
+    # s'impute a une journee. Une mesure dont la DATE est illisible ne
+    # s'impute a rien. La table porte donc une date qui peut etre nulle, et
+    # le total n'est pas la somme des comptes journaliers.
+    _date_ko = df_w["date"].isna()
+    _temp_ko = df_w["T_eau"].isna()
+    _ecarte = _date_ko | _temp_ko
+    _ec = df_w[_ecarte]
+    # Tout est construit en LISTES, positionnellement. Melanger un Index et
+    # une Series dans un constructeur de DataFrame ferait aligner l'un sur
+    # l'autre : les motifs se retrouveraient sur les mauvaises lignes, sans
+    # que rien ne le signale.
+    _d_ko = list(_date_ko[_ecarte])
+    _t_ko = list(_temp_ko[_ecarte])
+    marques_lecture = pd.DataFrame({
+        "ligne_source": list(_ec.index),
+        "date": list(_ec["date"]),
+        "valeur_temperature_brute": (
+            [str(v) for v in _ec[col_temp]] if col_temp in _ec.columns
+            else [""] * len(_ec)),
+        "motif": [(MOTIF_LECTURE_LES_DEUX if (d and t)
+                   else MOTIF_LECTURE_DATE if d
+                   else MOTIF_LECTURE_TEMPERATURE)
+                  for d, t in zip(_d_ko, _t_ko)],
+    }, columns=["ligne_source", "date", "valeur_temperature_brute", "motif"])
+
+    df_w = df_w[~_ecarte]
 
     daily = df_w.groupby("date").agg(
         T_eau_moy=("T_eau", "mean"),
@@ -105,8 +154,167 @@ def charger_eau(fichier_eau, col_date=None, col_temp=None, nom="",
 
     if retour_sous_quotidien:
         sub = df_w[["datetime", "date", "T_eau"]].dropna(subset=["datetime"]).copy()
+        return daily, sub, marques_lecture
+    return daily, marques_lecture
+
+
+# Les trois motifs, ecrits une fois. Le harnais et l'ecran les lisent ; ils
+# ne les recomposent pas.
+MOTIF_LECTURE_DATE = ("date illisible — l'horodatage n'a pas pu etre "
+                      "interprete (io_data.charger_eau)")
+MOTIF_LECTURE_TEMPERATURE = ("temperature illisible — la valeur n'a pas pu "
+                             "etre convertie en nombre (io_data.charger_eau)")
+MOTIF_LECTURE_LES_DEUX = ("date ET temperature illisibles "
+                          "(io_data.charger_eau)")
+
+
+def charger_eau(fichier_eau, col_date=None, col_temp=None, nom="",
+                feuille=None, ligne_entete=None, retour_sous_quotidien=False):
+    """
+    Vue HERITEE de `marquer_lecture` — signature et retour INCHANGES.
+
+    CORRECTIF 10 (D60) — `marquer_lecture` rend en plus la table des mesures
+    ecartees a la lecture. Cette fonction la retire, et rend exactement ce que
+    `charger_eau` rendait avant : `daily`, ou `(daily, sub)`.
+
+    Elle existe pour que le correctif ne se propage pas a ses appelants. Un
+    appelant qui veut la trace appelle `marquer_lecture` ; les autres ne
+    changent pas d'une ligne. C'est la forme retenue au correctif 3 pour
+    `controle_qualite`, et au correctif 5 pour `fusionner`.
+    """
+    res = marquer_lecture(fichier_eau, col_date=col_date, col_temp=col_temp,
+                          nom=nom, feuille=feuille, ligne_entete=ligne_entete,
+                          retour_sous_quotidien=retour_sous_quotidien)
+    if retour_sous_quotidien:
+        daily, sub, _marques = res
         return daily, sub
+    daily, _marques = res
     return daily
+
+
+# ---- CORRECTIF 12 (D86, D89) — LA COMPLETUDE DE JOURNEE ------------------
+# Les trois statuts, ecrits une fois. Le harnais et l'ecran les lisent ; ils ne
+# les recomposent pas.
+STATUT_COMPLETUDE_RETENUE = "retenue"
+STATUT_COMPLETUDE_SIGNALEE = "signalee"
+STATUT_COMPLETUDE_INDETERMINABLE = "indeterminable"
+
+MOTIF_COMPLETUDE_INDETERMINABLE = (
+    "structure infra-journaliere illisible — toutes les mesures portent le "
+    "meme horodatage, le critere de completude ne peut rien voir et s'en "
+    "abstient (D92)")
+
+
+def trou_maximal_par_journee(sub):
+    """
+    Le plus long intervalle NON OBSERVE de chaque journee, bornes de minuit
+    comprises, en heures.
+
+    Cette grandeur ne depend d'AUCUNE cadence de reference : une journee
+    horaire reguliere rend 1 h, une journee a six heures reguliere rend 6 h,
+    une journee dont les mesures sont groupees le matin rend ~18 h. C'est ce
+    que la moyenne journaliere IGNORE, dit sans convention prealable.
+
+    Le critere evident — « trop peu de mesures » — avait ete essaye et
+    ECARTE : rapporte au pas de mesure modal, il confondait une CADENCE PLUS
+    LARGE avec une journee TRONQUEE, et designait 199 journees parfaitement
+    regulieres d'un point qui avait change de cadence. C'est l'erreur du pas
+    modal que l'etape 1 avait deja corrigee sur la matrice de couverture.
+    """
+    if sub is None or not len(sub):
+        return pd.DataFrame(columns=["date", "trou_max_h"])
+    s = sub[["datetime"]].copy()
+    s["dt"] = pd.to_datetime(s["datetime"])
+    s["jour"] = s["dt"].dt.normalize()
+    lignes = []
+    for jour, g in s.groupby("jour"):
+        t = g["dt"].sort_values()
+        bornes = [jour] + list(t) + [jour + pd.Timedelta(days=1)]
+        ecarts = pd.Series(bornes).diff().dropna().dt.total_seconds() / 3600.0
+        lignes.append(dict(date=jour.date(),
+                           trou_max_h=(float(ecarts.max()) if len(ecarts)
+                                       else 24.0)))
+    return pd.DataFrame(lignes)
+
+
+def marquer_completude(sub, daily=None, facteur=2.0, verbose=False):
+    """
+    CORRECTIF 12, BRANCHE A (D89) — MARQUER SANS EXCLURE.
+
+    Retourne une table de MEME LONGUEUR que le nombre de journees observees,
+    ou chaque journee porte son trou maximal, son statut et son motif. AUCUNE
+    journee n'est retiree, aucune valeur n'est modifiee : c'est la forme des
+    correctifs 3, 5 et 10.
+
+    LE SEUIL SE DERIVE DU POINT TRAITE — `facteur` fois le trou median de ses
+    propres journees. Aucune valeur n'est importee, et la derivation ne
+    suppose aucune cadence : elle fonctionne a l'heure comme aux six heures,
+    et survit a un changement de cadence en cours de chronique.
+
+    D92 — SI LES HORODATAGES SONT DETRUITS, LE CRITERE S'ABSTIENT ET LE DIT.
+    Un point dont toutes les mesures portent le meme horodatage a un trou
+    median de 24 h : ses journees ne disent rien de leur propre repartition.
+    Le critere ne peut pas les juger. Il rend alors `indeterminable` pour
+    toutes, avec son motif — plutot que « aucune journee designee », qui se
+    lirait comme « tout va bien ».
+
+    MESURE AVANT LA POSE (out/etape16/) : 145 journees sur 68 134 (0,213 %),
+    sur 30 points. Elles se distinguent des autres d'un facteur 2,6 sur un
+    temoin independant du critere — leur ecart a la moyenne des journees
+    voisines. Retirer ces journees de la chaine (branche B, non retenue)
+    deplacerait `m` de 0,0014 au maximum et ne ferait basculer AUCUN verdict.
+
+    D93 — `n_mesures` FIGURE ICI, A COTE DU TROU.
+    Il etait produit par `marquer_lecture` depuis l'etape 1 et relu NULLE PART
+    (registre I11). Le defaut n'etait pas une colonne inutile : c'etait une
+    colonne que personne ne lit. Le trou dit ce que la journee IGNORE ;
+    l'effectif dit sur combien de mesures sa moyenne repose. Deux journees de
+    meme trou et d'effectifs tres differents cessent d'etre indiscernables —
+    et c'est ce qui permet de dire que les journees signalees ont une mediane
+    de 12 mesures sur 24, donc qu'elles ne sont pas pauvres mais GROUPEES.
+
+    `daily` est facultatif : sans lui la colonne vaut None, et rien d'autre ne
+    change. La table reste hors de `res.df` : y faire entrer une colonne la
+    ferait remonter par la fusion et deplacerait un artefact de metadonnees.
+    """
+    trous = trou_maximal_par_journee(sub)
+    if not len(trous):
+        return pd.DataFrame(columns=["date", "n_mesures", "trou_max_h",
+                                     "seuil_h", "statut", "motif"])
+    if daily is not None and "n_mesures" in getattr(daily, "columns", []):
+        trous = trous.merge(daily[["date", "n_mesures"]], on="date", how="left")
+    else:
+        trous["n_mesures"] = None
+    t = trous["trou_max_h"].to_numpy(dtype=float)
+    median = float(np.nanmedian(t))
+    trous["seuil_h"] = facteur * median
+
+    # 24 h de trou median : aucune journee ne porte d'information sur sa
+    # propre repartition. Ce n'est pas un seuil conventionnel, c'est la duree
+    # de la journee.
+    if median >= 24.0:
+        trous["statut"] = STATUT_COMPLETUDE_INDETERMINABLE
+        trous["motif"] = MOTIF_COMPLETUDE_INDETERMINABLE
+        if verbose:
+            print(f"  ⚠️  completude : structure infra-journaliere illisible "
+                  f"({len(trous)} journee(s)) — critere non applicable")
+        return trous[["date", "n_mesures", "trou_max_h", "seuil_h",
+                      "statut", "motif"]]
+
+    signalee = t > (facteur * median)
+    trous["statut"] = np.where(signalee, STATUT_COMPLETUDE_SIGNALEE,
+                               STATUT_COMPLETUDE_RETENUE)
+    trous["motif"] = [
+        (f"journee incomplete — {h:.1f} h sans mesure, soit plus de "
+         f"{facteur:.0f} fois le trou habituel de ce point "
+         f"({median:.1f} h). La moyenne journaliere ne couvre pas le cycle.")
+        if s else ""
+        for h, s in zip(t, signalee)]
+    if verbose and signalee.any():
+        print(f"  {int(signalee.sum())} journee(s) signalee(s) incomplete(s) "
+              f"(trou > {facteur * median:.1f} h)")
+    return trous[["date", "n_mesures", "trou_max_h", "seuil_h",
+                  "statut", "motif"]]
 
 
 def charger_air(fichier_air):
@@ -399,8 +607,20 @@ def charger_air_brut(source, col_date=None, col_temp=None,
     """
     Charge un fichier air brut (T° journalières station de référence),
     couvrant potentiellement une plage large. Auto-détecte séparateur,
-    encodage et colonnes (date, TM). Conserve RR si présent.
-    Retourne un DataFrame [date, T_air, (RR)].
+    encodage et colonnes (date, TM). Conserve RR, TN et TX si présents.
+    Retourne un DataFrame [date, T_air, (RR), (TN), (TX)].
+
+    CORRECTIF 1 — TN ET TX CESSENT D'ÊTRE JETÉS À LA LECTURE
+    ---------------------------------------------------------
+    `usecols` ne retenait que `NUM_POSTE, NOM_USUEL, AAAAMMJJ, TM, RR` : les
+    températures minimale et maximale de l'air n'étaient **jamais lues**, donc
+    jamais transmises. La marche 2 du détecteur en a besoin — elle compare la
+    forme du signal d'eau à celle du signal d'air — et sans elles elle serait
+    perpétuellement indisponible.
+
+    Elles sont conservées **quand elles existent**, jamais exigées : un
+    fichier d'air qui ne les porte pas reste lisible, et la marche 2 se
+    déclare alors indisponible plutôt que de disparaître en silence.
 
     Cas Météo-France (export multi-stations, potentiellement très volumineux) :
     la lecture est restreinte aux seules colonnes utiles via `usecols`, ce qui
@@ -429,7 +649,8 @@ def charger_air_brut(source, col_date=None, col_temp=None,
                 choix = sts[0]["code"]          # défaut : mieux couvert (CLI)
 
         # Lecture par blocs, en ne conservant que la station retenue.
-        usecols = ["NUM_POSTE", "NOM_USUEL", "AAAAMMJJ", "TM", "RR"]
+        usecols = ["NUM_POSTE", "NOM_USUEL", "AAAAMMJJ", "TM", "RR",
+                   "TN", "TX"]
         morceaux = []
         nom_ret = None
         reader = pd.read_csv(
@@ -448,7 +669,8 @@ def charger_air_brut(source, col_date=None, col_temp=None,
                 nn = chunk["NOM_USUEL"].dropna()
                 if nn.size:
                     nom_ret = str(nn.iloc[0])
-            keep = [c for c in ["AAAAMMJJ", "TM", "RR"] if c in chunk.columns]
+            keep = [c for c in ["AAAAMMJJ", "TM", "RR", "TN", "TX"]
+                    if c in chunk.columns]
             morceaux.append(chunk[keep])
         df = (pd.concat(morceaux, ignore_index=True) if morceaux
               else pd.DataFrame(columns=["AAAAMMJJ", "TM"]))
@@ -457,9 +679,12 @@ def charger_air_brut(source, col_date=None, col_temp=None,
         out["date"] = _parse_dates_air(df["AAAAMMJJ"]).dt.date
         out["T_air"] = pd.to_numeric(
             df["TM"].astype(str).str.replace(",", "."), errors="coerce")
-        if "RR" in df.columns:
-            out["RR"] = pd.to_numeric(
-                df["RR"].astype(str).str.replace(",", "."), errors="coerce")
+        for _c in ("RR", "TN", "TX"):
+            if _c in df.columns:
+                out[_c] = pd.to_numeric(
+                    df[_c].astype(str).str.replace(",", "."), errors="coerce")
+        # `dropna` ne porte que sur la date et TM : une journée sans TN ni TX
+        # reste lue, la marche 2 s'abstiendra sur elle.
         out = out.dropna(subset=["date", "T_air"])
         if choix is not None or choix_nom is not None:
             out.attrs["station"] = {"code": choix or "", "nom": nom_ret or (choix_nom or "")}
@@ -485,10 +710,11 @@ def charger_air_brut(source, col_date=None, col_temp=None,
     out["date"] = _parse_dates_air(df[col_date]).dt.date
     out["T_air"] = pd.to_numeric(
         df[col_temp].astype(str).str.replace(",", "."), errors="coerce")
-    rr_col = next((c for c in df.columns if c.upper() == "RR"), None)
-    if rr_col:
-        out["RR"] = pd.to_numeric(
-            df[rr_col].astype(str).str.replace(",", "."), errors="coerce")
+    for _nom in ("RR", "TN", "TX"):
+        _col = next((c for c in df.columns if c.upper() == _nom), None)
+        if _col:
+            out[_nom] = pd.to_numeric(
+                df[_col].astype(str).str.replace(",", "."), errors="coerce")
     return out.dropna(subset=["date", "T_air"])
 
 
@@ -528,23 +754,60 @@ def calculer_normales_ecarts(df_air, ref=REF_NORMALES, fenetre_lissage=10,
         if verbose:
             print(f"  ⚠️  {msg}")
 
-    brute = df_ref.groupby("doy")["T_air"].mean()
-    idx = pd.Series(index=range(1, 367), dtype=float)
-    idx.loc[brute.index] = brute.values
+    # ---- CORRECTIF 11 (D86) — L'AXE DE LA NORMALE EST CALENDAIRE ---------
+    #
+    # LE DEFAUT. La normale brute etait agregee par `doy`, calcule sur les
+    # dates REELLES ; la correspondance (jour, mois) -> normale etait ensuite
+    # construite sur `date_range("2000-01-01", "2000-12-31")`, et 2000 est
+    # BISSEXTILE. Les deux axes ne coincidaient pas :
+    #
+    #   · du 1er mars au 31 decembre, une journee d'une annee COMMUNE recevait
+    #     la normale du jour SUIVANT (son doy reel valait 60 le 1er mars, la
+    #     table lui donnait le doy 61) ;
+    #   · et le doy 60 melangeait deja, a l'agregation, le 29 fevrier des
+    #     annees bissextiles avec le 1er mars des annees communes.
+    #
+    # MESURE AVANT CORRECTION (out/etape15/P1_normales_par_point.csv,
+    # replication controlee identique sur les 31 points) : 60 116 journees sur
+    # 67 054 — 89,65 % — recevaient une normale decalee. Ecart median
+    # 0,064 degC sur T_normale, maximum 0,343 ; repercute sur T_norm :
+    # 0,029 degC en median, 0,125 au maximum.
+    #
+    # LA CONVENTION RETENUE. L'agregation se fait par IDENTITE CALENDAIRE
+    # `(mois, jour)` : le 1er mars est le 1er mars dans toutes les annees, et
+    # le 29 fevrier forme son propre groupe, alimente par les seules annees
+    # bissextiles. Le lissage circulaire porte sur l'axe des 366 jours
+    # calendaires, donc sur des voisins calendaires. La lecture par
+    # (jour, mois) ne change pas — elle interroge desormais le MEME axe que
+    # l'agregation, et c'est tout ce que ce correctif fait.
+    #
+    # PROVENANCE. `fenetre_lissage` et la periode de reference sont ceux de la
+    # version anterieure, repris sans modification. Le nombre 366 n'est pas
+    # une valeur nouvelle : c'est le nombre de jours calendaires distincts, et
+    # il etait deja ecrit trois fois ici. Aucune valeur propre a un bassin.
+    #
+    # `doy` (ligne ci-dessus) n'entre plus dans le calcul de la normale. Il
+    # reste calcule car il est publie dans le diagnostic et lu ailleurs.
+    axe = pd.to_datetime(pd.Series(pd.date_range("2000-01-01", "2000-12-31")))
+    position = {(int(m), int(j)): i
+                for i, (m, j) in enumerate(zip(axe.dt.month, axe.dt.day))}
+
+    brute = df_ref.groupby(["month", "day"])["T_air"].mean()
+    idx = pd.Series(index=range(len(axe)), dtype=float)
+    for (mois_, jour_), valeur in brute.items():
+        p = position.get((int(mois_), int(jour_)))
+        if p is not None:
+            idx.iloc[p] = valeur
     idx = idx.interpolate(limit_direction="both")
     w = 2 * fenetre_lissage + 1
     triple = pd.concat([idx, idx, idx], ignore_index=True)
     liss = triple.rolling(window=w, center=True, min_periods=1).mean()
-    normale_doy = liss.iloc[366:366*2].reset_index(drop=True)
-    normale_doy.index = range(1, 367)
+    normale_axe = liss.iloc[len(axe):2 * len(axe)].reset_index(drop=True)
 
-    ref_dates = pd.to_datetime(pd.Series(pd.date_range("2000-01-01", "2000-12-31")))
-    lkp = pd.DataFrame({
-        "day": ref_dates.dt.day.values,
-        "month": ref_dates.dt.month.values,
-        "doy": ref_dates.dt.dayofyear.values})
-    lkp["T_normale"] = lkp["doy"].map(normale_doy)
-    normales_lkp = lkp[["day", "month", "T_normale"]]
+    normales_lkp = pd.DataFrame({
+        "day": axe.dt.day.values,
+        "month": axe.dt.month.values,
+        "T_normale": normale_axe.values})
 
     df = df.merge(normales_lkp, on=["day", "month"], how="left")
     df["Delta_TMm"] = df["T_air"] - df["T_normale"]

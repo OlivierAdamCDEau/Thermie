@@ -65,9 +65,15 @@ def fig_chronique(df, nom, output_dir, periode=None):
     from .core import inserer_lacunes
     # Couper la courbe de T° eau (Tmh) aux lacunes de mesure pour ne pas
     # relier des points de part et d'autre d'un trou (point 2 des retours).
-    # Si la normalisation a été calculée, on trace aussi l'eau compensée pour
+    # Si la normalisation a été calculée, on trace aussi l'eau NORMALISÉE pour
     # que l'écart entre observé et « année standard » soit lisible d'un coup
     # d'œil (c'est cet écart qui matérialise l'anomalie climatique de la période).
+    # D74 — cette courbe est `Tmh_norm`, soit `Tmh − m × Delta_TMm_liss` : un
+    # coefficient estimé et une anomalie lissée. Elle disait « compensée », qui
+    # était alors le nom d'une AUTRE formule de ce code — `T − Delta_TMm`,
+    # sans coefficient, dans indicateurs.py. Un même mot pour deux formules.
+    # Le correctif 4 (voie B) a depuis retiré la seconde ; « normalisée » est
+    # désormais le seul nom d'une température corrigée.
     cols_coupe = ["Tmh"] + (["Tmh_norm"] if "Tmh_norm" in df.columns else [])
     df = inserer_lacunes(df, col_date="date_dt", cols_valeurs=cols_coupe,
                          seuil_pas=3)
@@ -88,10 +94,10 @@ def fig_chronique(df, nom, output_dir, periode=None):
     if "Tmh_norm" in df.columns and df["Tmh_norm"].notna().any():
         ax.plot(df["date_dt"], df["Tmh_norm"], color="#117A65", lw=2.0,
                 ls="-.", alpha=0.95,
-                label="Tmh — eau COMPENSÉE (année standard)")
+                label="Tmh — eau NORMALISÉE (année standard)")
         ax.fill_between(df["date_dt"], df["Tmh"], df["Tmh_norm"],
                         color="#16A085", alpha=0.13, zorder=0,
-                        label="Écart brut ↔ compensé")
+                        label="Écart brut ↔ normalisé")
     ax.set_xlabel("Date", fontsize=11); ax.set_ylabel("Température (°C)", fontsize=11)
     ax.set_title(f"{nom} — Chronique thermique\nNormales 1991–2020, T air et Tmh",
                  fontsize=13, fontweight="bold", pad=15)
@@ -1138,7 +1144,7 @@ def fig_matrice_diagnostic(mat, nom, output_dir):
 def fig_indicateurs_resume(table, nom, output_dir):
     """
     Synthèse visuelle des indicateurs mensuels et annuels (onglet Indicateurs) :
-    Panneau gauche — Tmax / Tmin mensuelles (brutes et compensées) ;
+    Panneau gauche — Tmax / Tmin mensuelles (brutes) ;
     Panneau droit  — amplitude nycthémérale mensuelle (moyenne ± écart-type).
     Le Tmm30j (annuel) est reporté en repère horizontal sur le panneau gauche.
     """
@@ -1148,7 +1154,6 @@ def fig_indicateurs_resume(table, nom, output_dir):
     if len(t) == 0:
         return None
     row_an = table[table["Période"] == "Année"]
-    has_comp = "Tmax comp (°C)" in t.columns
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.6))
     fig.patch.set_facecolor("white")
@@ -1159,11 +1164,8 @@ def fig_indicateurs_resume(table, nom, output_dir):
     ax1.plot(x, t["Tmax (°C)"], "o-", color="#C0392B", lw=2, ms=5, label="Tmax brute")
     ax1.plot(x, t["Tmin (°C)"], "o-", color="#2980B9", lw=2, ms=5, label="Tmin brute")
     ax1.fill_between(x, t["Tmin (°C)"], t["Tmax (°C)"], color="#AEB6BF", alpha=0.15)
-    if has_comp:
-        ax1.plot(x, t["Tmax comp (°C)"], "s--", color="#C0392B", lw=1.4, ms=4,
-                 alpha=0.6, label="Tmax compensée")
-        ax1.plot(x, t["Tmin comp (°C)"], "s--", color="#2980B9", lw=1.4, ms=4,
-                 alpha=0.6, label="Tmin compensée")
+    # CORRECTIF 4, VOIE B — les deux courbes en tirets « Tmax/Tmin compensée »
+    # sont retirees avec les colonnes qu'elles tracaient.
     if len(row_an) and "Tmm30j brut (°C)" in row_an.columns:
         v = row_an["Tmm30j brut (°C)"].iloc[0]
         if pd.notna(v):

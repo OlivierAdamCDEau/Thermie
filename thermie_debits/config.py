@@ -76,17 +76,88 @@ class QCConfig:
     t_eau_min: float = -0.5     # °C (sous 0 : gel/erreur)
     t_eau_max: float = 35.0     # °C (au-dessus : capteur exposé)
 
-    # -- Sonde hors d'eau (diagnostic type Heymonrupt) --
+    # -- Sonde hors d'eau — DÉTECTEUR RELATIF À DEUX MARCHES (correctif 1) --
+    #
+    # `hors_eau_ecart_seuil` et `hors_eau_exclut_saison` ONT DISPARU. Le
+    # premier était un seuil ABSOLU en °C : il supposait qu'un écart
+    # eau-air de tant de degrés signifie la même chose partout, ce que la
+    # mesure d'étape 3 a démenti. Le second excluait la saison estivale
+    # ENTIÈRE dès qu'une année paraissait suspecte — un remède plus large que
+    # le mal. Ils sont remplacés par une relativisation à l'habitude du
+    # point : chaque grandeur est comparée à sa propre médiane et à sa propre
+    # dispersion, mois par mois, et le seuil `k` se lit en écarts-types.
     hors_eau: bool = True
-    hors_eau_ecart_seuil: float = 4.0            # °C (T_eau_max − T_air médian)
-    hors_eau_mois: tuple = (6, 7, 8, 9)          # fenêtre de diagnostic (JJAS)
-    hors_eau_min_jours: int = 5                  # nb min de jours suspects
-    hors_eau_exclut_saison: bool = True          # exclut la saison JJAS entière
+    # CORRECTIF 13 (D105) — LA FENÊTRE S'ÉTEND À L'ANNÉE ENTIÈRE.
+    # Elle valait (6, 7, 8, 9). La mesure d'étape 19 a établi que 95 des 134
+    # journées d'artefact non détectées tombaient hors de ces quatre mois, et
+    # que le mois le plus touché était MAI — celui où l'on pose les sondes.
+    # Trois chroniques de trois bassins différents commencent le 10 mai 2021
+    # et portent le même bloc initial ; deux d'entre elles se suivent à six
+    # centièmes de degré pendant trois semaines, ce que deux rivières
+    # distinctes ne font pas.
+    #
+    # AUCUNE MÉTHODE NOUVELLE. `relativiser` regroupe déjà par mois du point
+    # traité, exige déjà un effectif minimal et une dispersion minimale, et
+    # s'abstient déjà quand ils manquent. On lève une restriction.
+    #
+    # L'extension seule marquerait 73 journées de saison froide sans qu'aucune
+    # soit corroborée — une vague de froid produit le même écart eau-air
+    # qu'une sonde émergée. C'est le SECOND MEMBRE de la marche 1 (D111,
+    # `qc.ecart_a_la_mediane`) qui lève cette ambiguïté, et il est indissociable
+    # de cette extension.
+    hors_eau_mois: tuple = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+
+    # Seuil commun aux deux marches, en unités de MAD*.
+    # Provenance : convention statistique de l'aberration à trois écarts-types.
+    k: float = 3.0
+
+    # Garde-fous de diagnosticabilité d'un couple (point, mois).
+    # `plancher_dispersion` : défaut égal au `plateau_ecart_type_min`
+    # ci-dessous — c'est déjà le seuil d'immobilité de V4.5, on n'en
+    # introduit pas un second.
+    plancher_dispersion: float = 0.05            # °C, MAD* au-dessous : abstention
+    min_jours_groupe: int = 10                   # jours minimum dans le mois
+
+    # Regroupement en épisodes. Défaut NEUTRE : aucune journée n'est écartée
+    # sur la seule longueur de son épisode (D38). La longueur reste publiée
+    # comme attribut de chaque journée marquée.
+    min_jours_episode: int = 1
+
+    # -- Regle de validite du coefficient de couplage (correctif 6) --
+    # Aucune valeur a calibrer. Le domaine est celui que V4.5 appliquait deja
+    # au seul coefficient saisonnier (`core.py`, garde-fou `0 <= sl <= 1.2`) ;
+    # D21 l'etend a l'estival. Le niveau de 95 % est une convention.
+    m_domaine: tuple = (0.0, 1.2)
+    m_niveau_ic: float = 0.95
+
+    # Garde-fou d'amplitude d'air de la marche 2 : quantile de l'amplitude
+    # d'air DU JEU TRAITÉ, et non une valeur de bassin (D15, D41).
+    q_ampl: float = 0.10
 
     # -- Plateau / sonde bloquée --
     plateau: bool = True
     plateau_fenetre: int = 7                     # jours
     plateau_ecart_type_min: float = 0.05         # °C (σ glissant sous ce seuil)
+
+    # -- Completude de journee (CORRECTIF 12, D86) --
+    # Une journee est SIGNALEE si son plus long intervalle non observe depasse
+    # `completude_facteur` fois le trou median du point traite. Le repere est
+    # donc la cadence du point lui-meme, quelle qu'elle soit et qu'elle change
+    # ou non en cours de chronique : aucune valeur n'est importee (D15, D41).
+    #
+    # Le facteur a ete DEPARTAGE SUR PIECES (D91, out/etape16/A_facteur.csv) et
+    # non choisi : a 2x, 3x et 4x le temoin independant separe identiquement
+    # (x2,59 / x2,59 / x2,62), parce qu'AUCUNE journee du corpus n'a un trou
+    # strictement compris entre 2 h et 4 h. Le seul point que le facteur
+    # departage est celui dont la cadence est de six heures : a 4x son seuil
+    # vaudrait 24 h, soit la journee entiere, et le critere y serait aveugle
+    # par construction.
+    #
+    # Ce champ n'est PAS expose par un widget, comme `m_domaine` et
+    # `m_niveau_ic` du correctif 6 : le seuil se derive du point traite, et
+    # seul le multiplicateur est fixe. L'exposer inviterait a regler station
+    # par station un critere que D41 veut uniforme.
+    completude_facteur: float = 2.0
 
     # -- Outliers MAD --
     mad_outliers: bool = True
@@ -99,10 +170,14 @@ class QCConfig:
             "bornes_physiques": self.bornes_physiques,
             "T_eau_min": self.t_eau_min, "T_eau_max": self.t_eau_max,
             "hors_eau": self.hors_eau,
-            "hors_eau_ecart_seuil": self.hors_eau_ecart_seuil,
             "hors_eau_mois": list(self.hors_eau_mois),
-            "hors_eau_min_jours": self.hors_eau_min_jours,
-            "hors_eau_exclut_saison": self.hors_eau_exclut_saison,
+            "k": self.k,
+            "plancher_dispersion": self.plancher_dispersion,
+            "min_jours_groupe": self.min_jours_groupe,
+            "min_jours_episode": self.min_jours_episode,
+            "q_ampl": self.q_ampl,
+            "m_domaine": list(self.m_domaine),
+            "m_niveau_ic": self.m_niveau_ic,
             "plateau": self.plateau, "plateau_fenetre": self.plateau_fenetre,
             "plateau_ecart_type_min": self.plateau_ecart_type_min,
             "mad_outliers": self.mad_outliers, "mad_k": self.mad_k,

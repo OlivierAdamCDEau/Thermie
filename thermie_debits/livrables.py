@@ -207,9 +207,14 @@ def construire_docx_bytes(res):
     _encadre(doc, red.couverture_calendaire(res))
 
     _sous_titre(doc, "1.4 Chronique thermique")
+    # D74 — « normalisée », et non « compensée » : la courbe tracée est
+    # `Tmh_norm`. Le §1.5 ci-dessous la définit d'ailleurs correctement, à huit
+    # lignes d'écart — la légende et la définition se contredisaient dans le
+    # même chapitre du même livrable. Le correctif 4 a depuis retiré la
+    # formule que « compensée » désignait ; le mot n'a plus de référent.
     _figure(doc, F.get("chronique"), "Chronique thermique : température de l'air, "
                                      "normales 1991–2020, et température de l'eau "
-                                     "brute puis compensée.")
+                                     "brute puis normalisée.")
 
     _sous_titre(doc, "1.5 Validité du modèle air–eau")
     _para(doc, "L'intérêt de cette normalisation est de rendre les stations et "
@@ -235,6 +240,22 @@ def construire_docx_bytes(res):
         for f in res.figures_climatiques:
             _figure(doc, f, f.axes[0].get_title().split("\n")[0])
 
+    # ---------- D68 — CE QUI A ÉTÉ VÉRIFIÉ ----------
+    # Placé APRÈS les données et AVANT les résultats : le lecteur doit savoir
+    # ce qu'il lit avant de le lire. Le texte vient de `redaction`, écrit une
+    # seule fois et rendu ici sans balisage.
+    _sous_titre(doc, "1.7 Ce qui a été vérifié, et ce qui ne l'a pas été")
+    _niv, _res = red.resume_etats(res)
+    _para(doc, _res, italique=True)
+    _para(doc, "Chaque contrôle figure ci-dessous, y compris ceux qui n'ont "
+               "rien trouvé : un contrôle absent de cette liste serait un "
+               "contrôle dont on ne saurait pas s'il a tourné.")
+    for _b in red.etats_declares_texte(res):
+        _encadre(doc, dict(titre=_b["titre"],
+                           verdict=red.VERDICT_ETAT[_b["niveau"]],
+                           niveau=red.COULEUR_ETAT[_b["niveau"]],
+                           lignes=_b["lignes"]))
+
     # ---------- Chapitre 2 — Thermie estivale ----------
     _titre_chapitre(doc, 2, "Vulnérabilité thermique estivale")
     _para(doc, "Caractérisation de la contrainte thermique subie en période "
@@ -243,6 +264,11 @@ def construire_docx_bytes(res):
                "mortalité à court terme d'autre part.")
 
     _sous_titre(doc, "2.1 Vulnérabilité chronique et aiguë")
+    # D68 — le statut de la normalisation, AVANT les chiffres qu'il qualifie.
+    _st_niv, _st_txt = red.statut_normalisation(res)
+    _encadre(doc, dict(titre="Statut de la correction climatique",
+                       verdict=red.VERDICT_ETAT[_st_niv],
+                       niveau=red.COULEUR_ETAT[_st_niv], lignes=[_st_txt]))
     _encadre(doc, red.interpretation_vulnerabilite(res))
     _figure(doc, F.get("vulnerabilite"), "Températures normalisées et seuils de "
                                          "stress et de létalité, une couleur par "
@@ -479,6 +505,12 @@ def construire_xlsx_bytes(res):
     ws = wb.create_sheet("02_Thermie_SGVT")
     ws.column_dimensions["A"].width = 44; ws.column_dimensions["B"].width = 40
     l = _xl_titre(ws, 1, "Vulnérabilité thermique estivale et SGVT")
+    # D68 — le statut de la normalisation, AVANT les chiffres qu'il qualifie.
+    _st_niv, _st_txt = red.statut_normalisation(res)
+    l = _xl_bloc(ws, l, dict(titre="Statut de la correction climatique",
+                             verdict=red.VERDICT_ETAT[_st_niv],
+                             niveau=red.COULEUR_ETAT[_st_niv],
+                             lignes=[_st_txt]))
     l = _xl_bloc(ws, l, red.interpretation_vulnerabilite(res))
     s, v, sg = res.sensibilite, res.vulnerabilite, res.sgvt
     if s and v and sg:
@@ -565,6 +597,30 @@ def construire_xlsx_bytes(res):
             l = _xl_tableau(ws, l, ["Corrélation", "Abscisse", "Ordonnée", "n",
                                     "R²", "Pente", "Régression sur"],
                             lignes, largeurs=[20, 24, 28, 8, 10, 10, 14])
+
+    # ---- 07 Ce qui a été vérifié (D68) ----
+    # Une feuille dédiée plutôt qu'une colonne dans 06_SYNTHESE : l'en-tête de
+    # celle-ci est INVARIANT par construction, pour que les lignes de plusieurs
+    # stations s'empilent telles quelles. Y ajouter une colonne casserait
+    # l'empilement avec des stations produites par une version antérieure.
+    ws = wb.create_sheet("07_Etats_declares")
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 110
+    l = _xl_titre(ws, 1, "Ce qui a été vérifié, et ce qui ne l'a pas été")
+    _niv, _res = red.resume_etats(res)
+    l = _xl_bloc(ws, l, dict(
+        titre="Résumé", verdict=_res, niveau=red.COULEUR_ETAT[_niv],
+        lignes=[
+                         "Chaque contrôle figure ci-dessous, y compris ceux "
+                         "qui n'ont rien trouvé : un contrôle absent de cette "
+               "liste serait un contrôle dont on ne saurait pas "
+               "s'il a tourné."]))
+    _etiquette = {"alerte": "POINT D'ATTENTION", "reserve": "réserve",
+                  "verifie": "vérifié"}
+    for _b in red.etats_declares_texte(res):
+        l = _xl_tableau(ws, l, [_etiquette[_b["niveau"]], _b["titre"]],
+                        [["", _ligne] for _ligne in _b["lignes"]],
+                        largeurs=[22, 110])
 
     # ---- 06 SYNTHÈSE (schéma fixe) ----
     ws = wb.create_sheet("06_SYNTHESE")
