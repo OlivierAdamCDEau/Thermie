@@ -28,6 +28,15 @@
   synthèse empile la fiche de chaque sonde (CSV), et tous les rapports
   Word + Excel se téléchargent en un ZIP. Avec une seule sonde et un seul
   fichier d'air, l'interface est celle de la 4.6.
+- **Code de poste Météo-France et zéro initial (correctif du 08/11).** La
+  liste des postes et la lecture de l'air lisaient `NUM_POSTE` de deux façons
+  différentes ; en ligne, l'une rendait 1014002 et l'autre 01014002, si bien
+  que le poste choisi ne correspondait à aucune ligne et que l'air paraissait
+  vide — pour toutes les sondes. Les codes sont désormais lus en texte et
+  comparés sans leurs zéros initiaux. C'est vraisemblablement aussi la cause
+  du « cannot convert float NaN to integer » initial. Un poste introuvable et
+  un poste sans température ont maintenant deux messages distincts, qui
+  précisent qu'il s'agit du fichier météo (température de l'air).
 - **Tests autonomes** : `tests/test_lecture_multi.py` (fichiers fabriqués,
   sans le corpus).
 

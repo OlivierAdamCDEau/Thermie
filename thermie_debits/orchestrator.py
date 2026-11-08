@@ -137,7 +137,8 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
                                      col_date=config.sources.air_col_date,
                                      col_temp=config.sources.air_col_temp,
                                      station_code=config.sources.air_station_code,
-                                     station_nom=config.sources.air_station_nom)
+                                     station_nom=config.sources.air_station_nom,
+                                     nom_fichier=config.sources.air_nom_fichier)
         if df_air.attrs.get("station"):
             res.diag_air_station = df_air.attrs["station"]
         ecart, normales, diag_norm = io.calculer_normales_ecarts(

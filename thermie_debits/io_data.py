@@ -572,8 +572,11 @@ def stations_air(source):
         reader = pd.read_csv(
             source, sep=fmt["sep"], encoding=fmt["enc"],
             usecols=lambda c: c in usecols,
-            dtype={"NUM_POSTE": "category", "NOM_USUEL": "category",
-                   "AAAAMMJJ": str},
+            # NUM_POSTE en TEXTE, comme dans `charger_air_brut` : lu en
+            # « category », il a pu perdre son zéro initial en ligne
+            # (01014002 → 1014002), et la station proposée à l'écran ne
+            # correspondait plus à aucune ligne du fichier à la lecture.
+            dtype={"NUM_POSTE": str, "NOM_USUEL": str, "AAAAMMJJ": str},
             chunksize=100_000)
         for chunk in reader:
             if "NUM_POSTE" not in chunk.columns:
@@ -602,8 +605,17 @@ def stations_air(source):
     return out if len(out) > 1 else []
 
 
+def _cle_poste(code):
+    """Code de poste Météo-France normalisé pour comparaison : texte, sans
+    espaces, sans zéros initiaux (« 01014002 » et « 1014002 » → « 1014002 »)."""
+    s = str(code).strip()
+    if s.endswith(".0"):                 # code relu comme flottant
+        s = s[:-2]
+    return s.lstrip("0") or "0"
+
+
 def charger_air_brut(source, col_date=None, col_temp=None,
-                     station_code=None, station_nom=None):
+                     station_code=None, station_nom=None, nom_fichier=""):
     """
     Charge un fichier air brut (T° journalières station de référence),
     couvrant potentiellement une plage large. Auto-détecte séparateur,
@@ -663,11 +675,18 @@ def charger_air_brut(source, col_date=None, col_temp=None,
             usecols=lambda c: c in usecols,
             dtype={"NUM_POSTE": str, "AAAAMMJJ": str},
             chunksize=100_000)
+        # Codes comparés SANS leurs zéros initiaux : un code de poste qui a
+        # perdu son zéro quelque part (lecture numérique, fichier repassé par
+        # Excel) désigne toujours le même poste. Sans cela, 1014002 ne
+        # trouvait aucune ligne 01014002 et l'air était vide.
+        cle_choix = _cle_poste(choix) if choix is not None else None
+        n_lignes_poste = 0
         for chunk in reader:
             if choix is not None and "NUM_POSTE" in chunk.columns:
-                chunk = chunk[chunk["NUM_POSTE"] == choix]
+                chunk = chunk[chunk["NUM_POSTE"].map(_cle_poste) == cle_choix]
             elif choix_nom is not None and "NOM_USUEL" in chunk.columns:
                 chunk = chunk[chunk["NOM_USUEL"].astype(str) == choix_nom]
+            n_lignes_poste += len(chunk)
             if chunk.empty:
                 continue
             if nom_ret is None and "NOM_USUEL" in chunk.columns:
@@ -698,13 +717,23 @@ def charger_air_brut(source, col_date=None, col_temp=None,
         n_lignes_station = len(out)
         out = out.dropna(subset=["date", "T_air"])
         if out.empty:
-            qui = (f"station {nom_ret or choix_nom or ''} ({choix})"
-                   if (choix or choix_nom) else "fichier")
+            # Le message parle de l'AIR (fichier météo), pas de la sonde :
+            # c'est l'air de référence qui manque, la chronique d'eau n'y est
+            # pour rien. Deux causes distinctes, deux messages.
+            fichier = f" « {nom_fichier} »" if nom_fichier else ""
+            qui = (f"le poste {nom_ret or choix_nom or ''} ({choix})".replace("  ", " ")
+                   if (choix or choix_nom) else "le fichier")
+            if n_lignes_poste == 0 and (choix or choix_nom):
+                raise ValueError(
+                    f"Fichier météo{fichier} (température de l'air) : "
+                    f"{qui} est introuvable dans ce fichier. Choisir un autre "
+                    f"poste au tableau de rapprochement.")
             raise ValueError(
-                f"Air de référence vide : la {qui} ne porte aucune valeur de "
-                f"« {col_t} » ({n_lignes_station} journée(s) lue(s), toutes "
-                f"sans température). Choisir une autre station du fichier, ou "
-                f"une autre colonne de température.")
+                f"Fichier météo{fichier} (température de l'air) : {qui} ne "
+                f"porte aucune valeur de « {col_t} » ({n_lignes_station} "
+                f"journée(s) lue(s), toutes sans température de l'air). "
+                f"Choisir un autre poste du fichier, ou une autre colonne de "
+                f"température.")
         out.attrs["colonne_temperature"] = col_t
         if choix is not None or choix_nom is not None:
             out.attrs["station"] = {"code": choix or "", "nom": nom_ret or (choix_nom or "")}

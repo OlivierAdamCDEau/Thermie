@@ -107,7 +107,7 @@ def test_identifier_sonde_dce():
 def test_air_station_sans_TM_message_explicite(tmp_path):
     """Régression « cannot convert float NaN to integer »."""
     p = _meteo_france(tmp_path, [("001", "", "5.0"), ("002", "4.0", "4.5")])
-    with pytest.raises(ValueError, match="Air de référence vide"):
+    with pytest.raises(ValueError, match="aucune valeur de « TM »"):
         io_data.charger_air_brut(p, station_code="001")
 
 
@@ -130,3 +130,36 @@ def test_colonne_air_par_defaut_reste_TM(tmp_path):
     a = io_data.charger_air_brut(p)                  # station la mieux couverte
     assert a.attrs["station"]["code"] == "002"
     assert (a["T_air"] == 4.0).all()
+
+
+# ---- Codes de poste et zéro initial -----------------------------------------
+def test_code_poste_sans_zero_initial_trouve_le_poste(tmp_path):
+    """Régression v4.7 en ligne : la liste des postes rendait 1014002, le
+    fichier porte 01014002 → aucune ligne retenue, « air vide »."""
+    p = _meteo_france(tmp_path, [("01014002", "4.0", "4.5"),
+                                 ("01014001", "", "5.0")])
+    a = io_data.charger_air_brut(p, station_code="1014002")
+    assert len(a) == 10 and (a["T_air"] == 4.0).all()
+
+
+def test_fichier_sans_zero_initial_trouve_le_poste(tmp_path):
+    """Sens inverse : fichier repassé par Excel (1014002), code 01014002."""
+    p = _meteo_france(tmp_path, [("1014002", "4.0", "4.5"),
+                                 ("1014001", "", "5.0")])
+    a = io_data.charger_air_brut(p, station_code="01014002")
+    assert len(a) == 10
+
+
+def test_stations_air_conserve_le_zero_initial(tmp_path):
+    p = _meteo_france(tmp_path, [("01014002", "4.0", "4.5"),
+                                 ("01014001", "", "5.0")])
+    codes = [s["code"] for s in io_data.stations_air(p)]
+    assert codes == ["01014002", "01014001"]
+
+
+def test_poste_introuvable_message_distinct(tmp_path):
+    p = _meteo_france(tmp_path, [("01014002", "4.0", "4.5"),
+                                 ("01014001", "", "5.0")])
+    with pytest.raises(ValueError, match="introuvable"):
+        io_data.charger_air_brut(p, station_code="99999999",
+                                 nom_fichier="ARBENT.csv")
