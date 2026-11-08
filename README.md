@@ -14,6 +14,17 @@ Application **Streamlit** sur package Python modulaire. Elle ne suppose aucun
 bassin, aucune étude ni aucun contexte particulier : tout ce qui la paramètre
 est fourni en entrée ou choisi dans la barre latérale.
 
+## Version 4.7 — plusieurs sondes en une fois
+
+Déposer plusieurs sondes et un ou plusieurs fichiers d'air fait apparaître un
+**tableau de rapprochement sondes / station météo** : feuille Excel, colonnes,
+cours d'eau et point sont pré-remplis par détection (format d'échange DCE
+reconnu tel quel), la station d'air se choisit sonde par sonde, et le tableau
+s'enregistre en CSV pour être rechargé à la session suivante. L'analyse tourne
+sur toutes les sondes cochées, puis une synthèse les empile et tous les
+rapports se téléchargent en un ZIP. Aucun calcul n'est modifié — voir
+[`CHANGELOG.md`](CHANGELOG.md).
+
 ## Version 4.6
 
 La 4.6 corrige **treize défauts** de la chaîne qui va de la lecture des fichiers

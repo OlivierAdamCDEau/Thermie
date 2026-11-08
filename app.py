@@ -8,6 +8,9 @@ entièrement sur le package thermie_debits (aucune logique de calcul ici).
 Lancement : streamlit run app.py
 """
 import io
+import os
+import hashlib
+import zipfile
 import tempfile
 import pandas as pd
 import streamlit as st
@@ -73,13 +76,29 @@ st.sidebar.caption("Si ce numéro ne correspond pas à la dernière livraison, "
                    "le déploiement n'a pas pris (voir CHANGELOG.md).")
 
 st.sidebar.header("1. Données")
-up_eau = st.sidebar.file_uploader("Sonde thermique (eau) *", type=["csv", "xls", "xlsx"])
-up_air = st.sidebar.file_uploader(
-    "Air — station de référence (brut) *", type=["csv", "xls", "xlsx"],
+ups_eau = st.sidebar.file_uploader(
+    "Sonde(s) thermique(s) (eau) *", type=["csv", "xls", "xlsx"],
+    accept_multiple_files=True,
+    help="Une ou plusieurs sondes. Au-delà d'une sonde (ou d'un fichier "
+         "d'air), un tableau de rapprochement sondes / station météo "
+         "s'affiche dans la zone principale.") or []
+ups_air = st.sidebar.file_uploader(
+    "Air — station(s) de référence (brut) *", type=["csv", "xls", "xlsx"],
+    accept_multiple_files=True,
     help="Températures journalières brutes de la station Météo-France de "
          "référence, couvrant au moins 1991–2020 (et idéalement les années "
          "des mesures d'eau). L'app calcule elle-même normales et écarts. "
-         "Colonnes reconnues : AAAAMMJJ + TM (RR optionnel).")
+         "Colonnes reconnues : AAAAMMJJ + TM (RR optionnel). Plusieurs "
+         "fichiers possibles : chaque sonde est alors rattachée à l'un "
+         "d'eux dans le tableau de rapprochement.") or []
+# Mode multi : plus d'une sonde OU plus d'un fichier d'air. Le rattachement
+# se fait alors au tableau de rapprochement ; sinon l'interface historique
+# (une sonde, un air) est conservée telle quelle.
+MULTI = len(ups_eau) > 1 or len(ups_air) > 1
+up_eau = ups_eau[0] if len(ups_eau) == 1 else None
+up_air = ups_air[0] if len(ups_air) == 1 else None
+if MULTI:
+    up_eau = up_air = None
 st.sidebar.caption("Débits (station hydrométrique de rattachement) — utilisés "
                    "seulement si le mode « Thermie + débits » est retenu "
                    "ci-dessous.")
@@ -270,14 +289,27 @@ eau_ligne_ent = air_ligne_ent = None
 with st.sidebar.expander("🔧 Format & colonnes (CSV / Excel)"):
     st.caption("Auto-détection du séparateur, de l'encodage, de la feuille "
                "Excel et de la ligne d'en-tête. Corriger ici si besoin.")
-    from thermie_debits.sniff import lire_brut, deviner_colonnes, lister_feuilles, est_excel
+    from thermie_debits.sniff import (lire_brut, deviner_colonnes,
+                                      lister_feuilles, est_excel,
+                                      detecter_feuille)
+    if MULTI:
+        st.info("Plusieurs fichiers déposés : feuille et colonnes se règlent "
+                "sonde par sonde dans le **tableau de rapprochement** de la "
+                "zone principale.")
 
     if up_eau is not None:
         try:
             st.markdown("**Sonde (eau)**")
             _feuilles = lister_feuilles(up_eau.getvalue(), up_eau.name)
             if _feuilles:
-                eau_feuille = st.selectbox("Feuille Excel (sonde)", _feuilles, key="eauf")
+                # Défaut = la feuille qui porte la chronique (détection), et
+                # non plus la première : au format DCE, la première feuille
+                # porte les métadonnées de pose.
+                _f_det = detecter_feuille(up_eau.getvalue(), up_eau.name)
+                eau_feuille = st.selectbox(
+                    "Feuille Excel (sonde)", _feuilles,
+                    index=_feuilles.index(_f_det) if _f_det in _feuilles else 0,
+                    key=f"eauf_{up_eau.name}")
             _dfp, _meta = lire_brut(up_eau.getvalue(), nom=up_eau.name,
                                     feuille=eau_feuille, n_lignes=200)
             fmt = _meta.get("format")
@@ -357,21 +389,199 @@ with st.expander("ℹ️ Contenu de cette version"):
     st.markdown(f"**v{__version__}** — {VERSION_NOTES}")
 
 
+# ============================================================
+# FICHIERS DÉPOSÉS ET RAPPROCHEMENT SONDES / STATION MÉTÉO
+# ============================================================
+def _chemin(uploaded):
+    """Chemin temporaire d'un fichier déposé, écrit UNE fois par contenu :
+    les relances de Streamlit ne réécrivent pas toutes les sondes à chaque
+    clic."""
+    cache = st.session_state.setdefault("_chemins_upload", {})
+    contenu = uploaded.getvalue()
+    k = (uploaded.name, hashlib.md5(contenu).hexdigest())
+    if k not in cache or not os.path.exists(cache[k]):
+        cache[k] = _save_upload(uploaded)
+    return cache[k]
+
+
+@st.cache_data(show_spinner=False)
+def _inspecter_sonde(contenu: bytes, nom: str) -> dict:
+    """Feuille, colonnes et identité détectées pour une sonde déposée. Une
+    détection en échec est RENDUE (clé `erreur`), jamais avalée."""
+    from thermie_debits.sniff import (lister_feuilles, evaluer_feuilles,
+                                      detecter_feuille, lire_brut,
+                                      deviner_colonnes, identifier_sonde)
+    out = dict(feuille="", col_date=None, col_temp=None, n_ok=0,
+               cours_eau=None, point=None, erreur=None)
+    try:
+        if lister_feuilles(contenu, nom):
+            ev = {e["feuille"]: e for e in evaluer_feuilles(contenu, nom)}
+            f = detecter_feuille(contenu, nom)
+            e = ev.get(f, {})
+            out.update(feuille=f, col_date=e.get("col_date"),
+                       col_temp=e.get("col_valeur"),
+                       n_ok=e.get("n_lignes_exploitables", 0))
+        else:
+            df, _m = lire_brut(contenu, nom=nom, n_lignes=200)
+            cd, ct = deviner_colonnes(df)
+            out.update(col_date=cd, col_temp=ct, n_ok=len(df))
+        out.update(identifier_sonde(contenu, nom))
+    except Exception as e:                          # noqa: BLE001 — rendu
+        out["erreur"] = f"lecture impossible : {e}"
+        return out
+    if out["col_date"] is None or out["col_temp"] is None:
+        out["erreur"] = ("colonnes non détectées (date="
+                         f"{out['col_date']}, température={out['col_temp']}) "
+                         "— à saisir dans le tableau")
+    return out
+
+
+@st.cache_data(show_spinner=False)
+def _stations_fichier(chemin: str) -> list:
+    from thermie_debits.io_data import stations_air
+    return stations_air(chemin)
+
+
+def _options_air(ups_air):
+    """Une option par station de chaque fichier d'air (export Météo-France
+    multi-stations), ou une par fichier sinon. Triées par couverture TM."""
+    opts = []
+    for u in ups_air:
+        sts = _stations_fichier(_chemin(u))
+        if not sts:
+            opts.append(dict(label=u.name, fichier=u.name, code=None,
+                             station=None, n_tm=-1))
+            continue
+        for s in sts:
+            alti = f", {s['alti']} m" if s.get("alti") is not None else ""
+            alerte = " ⚠ aucune TM" if s["n_tm"] == 0 else ""
+            opts.append(dict(
+                label=(f"{u.name} · {s['nom']} {s['code']}{alti} — "
+                       f"{s['n_tm']} j TM, {s['debut'][:4]}–{s['fin'][:4]}"
+                       f"{alerte}"),
+                fichier=u.name, code=s["code"],
+                station=f"{s['nom']} ({s['code']})", n_tm=s["n_tm"]))
+    opts.sort(key=lambda o: o["n_tm"], reverse=True)
+    return opts
+
+
+# Colonnes du tableau de rapprochement — écrites une fois.
+_C_INCL, _C_FICH, _C_POINT, _C_CE = ("Inclure", "Sonde (fichier)", "Point",
+                                     "Cours d'eau")
+_C_AIR, _C_FEUIL, _C_CD, _C_CT = ("Air de référence", "Feuille",
+                                  "Colonne date", "Colonne T°")
+_C_NOK, _C_DIAG = "Lignes date+T° (aperçu)", "Détection"
+_EDITABLES = [_C_INCL, _C_POINT, _C_CE, _C_AIR, _C_FEUIL, _C_CD, _C_CT]
+
+rapprochement = None
+options_air = []
+if MULTI and ups_eau and ups_air:
+    options_air = _options_air(ups_air)
+    labels_air = [o["label"] for o in options_air]
+    st.header("🔗 Rapprochement sondes / station météo")
+    st.caption(
+        "Une ligne par sonde. La feuille, les colonnes, le cours d'eau et le "
+        "point sont pré-remplis par détection ; tout se corrige ici. Chaque "
+        "sonde est rattachée à une station d'air : par défaut la mieux "
+        "couverte en TM — à vérifier (proximité, altitude comparable, "
+        "couverture 1991–2020).")
+    c_def, c_rech = st.columns([2, 1])
+    air_defaut = c_def.selectbox(
+        "Air de référence proposé par défaut pour toutes les sondes",
+        labels_air, index=0, key="air_defaut")
+    rech = c_rech.file_uploader(
+        "Recharger un rapprochement enregistré (CSV)", type=["csv"],
+        key="rappr_csv",
+        help="Fichier produit par le bouton « Enregistrer le rapprochement » "
+             "ci-dessous. Les lignes sont reprises par nom de fichier de sonde.")
+
+    lignes = []
+    for u in ups_eau:
+        ins = _inspecter_sonde(u.getvalue(), u.name)
+        lignes.append({
+            _C_INCL: ins["erreur"] is None,
+            _C_FICH: u.name,
+            _C_POINT: ins["point"] or os.path.splitext(u.name)[0],
+            _C_CE: ins["cours_eau"] or nom_ce,
+            _C_AIR: air_defaut,
+            _C_FEUIL: ins["feuille"] or "",
+            _C_CD: ins["col_date"] or "",
+            _C_CT: ins["col_temp"] or "",
+            _C_NOK: int(ins["n_ok"]),
+            _C_DIAG: ins["erreur"] or "ok"})
+    df_rappr = pd.DataFrame(lignes)
+
+    if rech is not None:
+        anc = pd.read_csv(io.BytesIO(rech.getvalue()), sep=";", dtype=str,
+                          keep_default_na=False, encoding="utf-8-sig")
+        if _C_FICH not in anc.columns:
+            st.error(f"Rapprochement non repris : colonne « {_C_FICH} » "
+                     f"absente du fichier rechargé.")
+        else:
+            anc = anc.drop_duplicates(_C_FICH).set_index(_C_FICH)
+            non_repris = []
+            for i, fich in df_rappr[_C_FICH].items():
+                if fich not in anc.index:
+                    non_repris.append(fich)
+                    continue
+                for c in _EDITABLES:
+                    if c not in anc.columns:
+                        continue
+                    v = anc.at[fich, c]
+                    if c == _C_INCL:
+                        df_rappr.at[i, c] = str(v).strip().lower() in (
+                            "true", "1", "oui", "vrai")
+                    elif c == _C_AIR and v not in labels_air:
+                        st.warning(f"{fich} : air enregistré « {v} » absent "
+                                   f"des fichiers déposés — défaut conservé.")
+                    else:
+                        df_rappr.at[i, c] = v
+            if non_repris:
+                st.info("Sondes absentes du rapprochement rechargé (valeurs "
+                        "détectées conservées) : " + ", ".join(non_repris))
+
+    _cle_tab = hashlib.md5(
+        "|".join([u.name for u in ups_eau] + labels_air + [air_defaut]
+                 + [rech.name if rech else ""]).encode()).hexdigest()[:10]
+    rapprochement = st.data_editor(
+        df_rappr, key=f"rappr_{_cle_tab}", hide_index=True,
+        use_container_width=True,
+        disabled=[_C_FICH, _C_NOK, _C_DIAG],
+        column_config={
+            _C_INCL: st.column_config.CheckboxColumn(_C_INCL, width="small"),
+            _C_AIR: st.column_config.SelectboxColumn(
+                _C_AIR, options=labels_air, required=True, width="large"),
+            _C_NOK: st.column_config.NumberColumn(
+                _C_NOK, help="Lignes portant une date et une température "
+                             "numérique, sur les 300 premières de la "
+                             "feuille retenue."),
+        })
+    st.download_button(
+        "💾 Enregistrer le rapprochement (CSV)",
+        rapprochement.to_csv(index=False, sep=";").encode("utf-8-sig"),
+        "rapprochement_sondes_meteo.csv", "text/csv",
+        help="À recharger lors d'une prochaine session pour ne pas refaire "
+             "le rattachement.")
+    if mode == "thermie_debits" and up_deb:
+        st.caption("ℹ️ Mode thermie + débits : le même fichier de débit est "
+                   "appliqué à toutes les sondes.")
+    st.divider()
+
+
 def _inputs_ok():
-    if not (up_eau and up_air):
+    if not (ups_eau and ups_air):
         return False, "Fournissez au minimum : sonde eau et air (station de référence)."
     if mode == "thermie_debits" and not up_deb:
         return False, "Mode thermie+débits : fournissez le débit influencé "\
                       "(ou passez en mode thermie seule)."
+    if MULTI and (rapprochement is None or not rapprochement[_C_INCL].any()):
+        return False, "Aucune sonde cochée « Inclure » au tableau de rapprochement."
     return True, ""
 
 
-if lancer:
-    ok, msg = _inputs_ok()
-    if not ok:
-        st.error(msg); st.stop()
-    src = SourcesConfig(
-        fichier_eau=_save_upload(up_eau), fichier_air=_save_upload(up_air),
+def _sources_communes():
+    """Champs de SourcesConfig identiques pour toutes les sondes."""
+    return dict(
         # INVARIANT, et non un défaut (D22) : le chemin application calcule
         # toujours ses normales depuis l'air brut. La branche EcartNormales
         # pré-calculé (orchestrator.py) reste atteignable par la CLI, et
@@ -379,43 +589,164 @@ if lancer:
         fichier_normales=None,
         fichier_debit=_save_upload(up_deb) if (up_deb and mode == "thermie_debits") else None,
         fichier_debit_desinf=_save_upload(up_deb_des) if (up_deb_des and mode == "thermie_debits") else None,
-        eau_col_date=eau_cd, eau_col_temp=eau_ct,
-        air_col_date=air_cd, air_col_temp=air_ct,
-        air_station_code=air_station_code,
-        eau_nom_fichier=up_eau.name if up_eau else "",
-        eau_feuille=eau_feuille, eau_ligne_entete=eau_ligne_ent,
-        air_nom_fichier=up_air.name if up_air else "",
-        air_feuille=air_feuille, air_ligne_entete=air_ligne_ent,
-        nom_cours_eau=nom_ce, localisation_sonde=loc_sonde,
-        nom_station_debit=nom_station, nom_station_meteo=nom_station_meteo)
-    cfg = AnalyseConfig(sources=src, qc=qc, contexte_piscicole=contexte_key,
-                        espece_repere=espece_repere,
-                        mode=mode, faire_volet_climatique=faire_clim,
-                        seuil_comblement_desinf=seuil_comblement,
-                        normales_fenetre_lissage=norm_fenetre,
-                        normales_min_annees=norm_min_ans,
-                        normalisation_lissage_delta=liss_delta,
-                        stress_plancher_pct=stress_plancher,
-                        stress_corr_r2_min=stress_r2,
-                        periode_affichage=periode_affichage,
-                        # INVARIANT, et non un défaut : l'application n'écrit
-                        # jamais sur disque. Le dériver du dataclass la ferait
-                        # écrire le jour où celui-ci porterait un chemin.
-                        output_dir=None)
-    with st.spinner("Analyse en cours..."):
+        nom_station_debit=nom_station)
+
+
+def _config(src):
+    return AnalyseConfig(sources=src, qc=qc, contexte_piscicole=contexte_key,
+                         espece_repere=espece_repere,
+                         mode=mode, faire_volet_climatique=faire_clim,
+                         seuil_comblement_desinf=seuil_comblement,
+                         normales_fenetre_lissage=norm_fenetre,
+                         normales_min_annees=norm_min_ans,
+                         normalisation_lissage_delta=liss_delta,
+                         stress_plancher_pct=stress_plancher,
+                         stress_corr_r2_min=stress_r2,
+                         periode_affichage=periode_affichage,
+                         # INVARIANT, et non un défaut : l'application n'écrit
+                         # jamais sur disque. Le dériver du dataclass la ferait
+                         # écrire le jour où celui-ci porterait un chemin.
+                         output_dir=None)
+
+
+def _travaux():
+    """Liste de (nom du point, SourcesConfig) à analyser."""
+    communs = _sources_communes()
+    if not MULTI:
+        src = SourcesConfig(
+            fichier_eau=_save_upload(up_eau), fichier_air=_save_upload(up_air),
+            eau_col_date=eau_cd, eau_col_temp=eau_ct,
+            air_col_date=air_cd, air_col_temp=air_ct,
+            air_station_code=air_station_code,
+            eau_nom_fichier=up_eau.name, eau_feuille=eau_feuille,
+            eau_ligne_entete=eau_ligne_ent,
+            air_nom_fichier=up_air.name, air_feuille=air_feuille,
+            air_ligne_entete=air_ligne_ent,
+            nom_cours_eau=nom_ce, localisation_sonde=loc_sonde,
+            nom_station_meteo=nom_station_meteo, **communs)
+        return [(loc_sonde or nom_ce or up_eau.name, src)]
+    par_nom_eau = {u.name: u for u in ups_eau}
+    par_nom_air = {u.name: u for u in ups_air}
+    par_label = {o["label"]: o for o in options_air}
+    travaux, vus = [], {}
+    for _i, r in rapprochement.iterrows():
+        if not r[_C_INCL]:
+            continue
+        u_eau = par_nom_eau[r[_C_FICH]]
+        o = par_label[r[_C_AIR]]
+        u_air = par_nom_air[o["fichier"]]
+        nom = str(r[_C_POINT]).strip() or os.path.splitext(u_eau.name)[0]
+        vus[nom] = vus.get(nom, 0) + 1
+        if vus[nom] > 1:                         # deux points homonymes
+            nom = f"{nom} ({vus[nom]})"
+
+        def _v(c):
+            return str(r[c]).strip() or None
+        src = SourcesConfig(
+            fichier_eau=_chemin(u_eau), fichier_air=_chemin(u_air),
+            eau_col_date=_v(_C_CD), eau_col_temp=_v(_C_CT),
+            air_station_code=o["code"],
+            eau_nom_fichier=u_eau.name, eau_feuille=_v(_C_FEUIL),
+            air_nom_fichier=u_air.name,
+            nom_cours_eau=str(r[_C_CE]).strip(), localisation_sonde=nom,
+            nom_station_meteo=o["station"] or nom_station_meteo, **communs)
+        travaux.append((nom, src))
+    return travaux
+
+
+if lancer:
+    ok, msg = _inputs_ok()
+    if not ok:
+        st.error(msg); st.stop()
+    travaux = _travaux()
+    resultats = {}
+    barre = st.progress(0.0, text="Analyse en cours...")
+    for _k, (nom_pt, src) in enumerate(travaux):
+        barre.progress(_k / len(travaux),
+                       text=f"Analyse {_k + 1}/{len(travaux)} — {nom_pt}")
         try:
-            res = run(cfg, verbose=False)
-        except Exception as e:
-            st.error(f"Erreur pendant l'analyse : {e}")
-            st.stop()
-    st.session_state["res"] = res
+            resultats[nom_pt] = run(_config(src), verbose=False)
+        except Exception as e:                      # noqa: BLE001 — rendu
+            # L'échec d'une sonde n'arrête pas les suivantes ; il est conservé
+            # et affiché dans la synthèse, jamais omis.
+            resultats[nom_pt] = e
+    barre.empty()
+    if len(resultats) == 1 and isinstance(next(iter(resultats.values())), Exception):
+        st.error(f"Erreur pendant l'analyse : {next(iter(resultats.values()))}")
+        st.stop()
+    st.session_state["resultats"] = resultats
+    for _k in [k for k in st.session_state
+               if str(k).startswith(("_docx", "_xlsx", "_zip"))]:
+        del st.session_state[_k]
 
 
-res = st.session_state.get("res")
-if res is None:
+resultats = st.session_state.get("resultats") or {}
+if not resultats:
     st.info("Configurez l'analyse dans le panneau de gauche puis cliquez sur "
             "**Lancer l'analyse**.")
     st.stop()
+
+_reussis = {n: r for n, r in resultats.items() if not isinstance(r, Exception)}
+_echecs = {n: r for n, r in resultats.items() if isinstance(r, Exception)}
+
+if len(resultats) > 1:
+    st.header("📋 Synthèse multi-sondes")
+    for n, e in _echecs.items():
+        st.error(f"**{n}** — analyse impossible : {e}")
+    _lignes = []
+    for n, r in resultats.items():
+        d = {"Point": n,
+             "Statut": "ok" if n in _reussis else f"échec : {r}"}
+        if n in _reussis:
+            d.update({k: ("" if v is None else str(v))
+                      for k, v in red.ligne_synthese(r).items()})
+        _lignes.append(d)
+    _df_synth = pd.DataFrame(_lignes).fillna("")
+    st.dataframe(_df_synth, use_container_width=True, hide_index=True)
+    c1, c2 = st.columns(2)
+    c1.download_button(
+        "⬇️ Synthèse multi-sondes (CSV)",
+        _df_synth.to_csv(index=False, sep=";").encode("utf-8-sig"),
+        "synthese_multi_sondes.csv", "text/csv", use_container_width=True)
+    with c2:
+        if st.button("📦 Générer tous les rapports (Word + Excel, ZIP)",
+                     use_container_width=True, disabled=not _reussis):
+            from thermie_debits.livrables import (construire_docx_bytes,
+                                                  construire_xlsx_bytes)
+            buf_zip, ko = io.BytesIO(), []
+            with zipfile.ZipFile(buf_zip, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("synthese_multi_sondes.csv",
+                           _df_synth.to_csv(index=False, sep=";").encode("utf-8-sig"))
+                barre = st.progress(0.0)
+                for _k, (n, r) in enumerate(_reussis.items()):
+                    barre.progress(_k / len(_reussis), text=f"Livrables — {n}")
+                    base = "".join(ch if ch.isalnum() or ch in "-_" else "_"
+                                   for ch in n)[:60]
+                    for ext, fn in (("docx", construire_docx_bytes),
+                                    ("xlsx", construire_xlsx_bytes)):
+                        try:
+                            z.writestr(f"{base}/Thermie_{base}.{ext}", fn(r))
+                        except Exception as e:      # noqa: BLE001 — rendu
+                            ko.append(f"{n} ({ext}) : {e}")
+                barre.empty()
+                if ko:
+                    z.writestr("ECHECS.txt", "\n".join(ko))
+            st.session_state["_zip"] = buf_zip.getvalue()
+            for m in ko:
+                st.error(f"Livrable non produit — {m}")
+        if st.session_state.get("_zip"):
+            st.download_button("⬇️ Rapports (.zip)", st.session_state["_zip"],
+                               "Rapports_Thermie.zip", "application/zip",
+                               use_container_width=True)
+    if not _reussis:
+        st.stop()
+    st.divider()
+    _choix = st.selectbox("Sonde affichée en détail ci-dessous",
+                          list(_reussis), key="sonde_affichee")
+    res = _reussis[_choix]
+    st.header(f"🔎 {_choix}")
+else:
+    res = next(iter(resultats.values()))
 
 ctx = res.contexte
 sg = res.sgvt
@@ -659,7 +990,7 @@ with ong[5]:
     if fr:
         from thermie_debits.exports import construire_fraie_xlsx_bytes
         try:
-            xlsx_bytes = construire_fraie_xlsx_bytes(fr, nom_ce)
+            xlsx_bytes = construire_fraie_xlsx_bytes(fr, res.config.sources.nom_cours_eau)
             st.download_button(
                 "⬇️ Détail fraie-croissance (XLSX — synthèse + phases)",
                 xlsx_bytes, "Fraie_Croissance_Detail.xlsx",
@@ -922,19 +1253,25 @@ with ong[noms.index("📦 Livrables")]:
                    "renseignées « non applicable ».")
 
     c1, c2 = st.columns(2)
-    _nom_fichier = (res.config.sources.nom_cours_eau or "station").replace(" ", "_")[:40]
+    _nom_fichier = (res.config.sources.localisation_sonde
+                    or res.config.sources.nom_cours_eau
+                    or "station").replace(" ", "_")[:40]
+    # Une clé par sonde : en multi-sondes, le rapport généré pour l'une ne
+    # doit pas être proposé au téléchargement sous le nom d'une autre.
+    _k_docx = f"_docx_{_nom_fichier}"
+    _k_xlsx = f"_xlsx_{_nom_fichier}"
 
     with c1:
         if st.button("📄 Générer le rapport Word", use_container_width=True):
             with st.spinner("Composition du rapport…"):
                 try:
                     from thermie_debits.livrables import construire_docx_bytes
-                    st.session_state["_docx"] = construire_docx_bytes(res)
+                    st.session_state[_k_docx] = construire_docx_bytes(res)
                 except Exception as e:
                     st.error(f"Échec de génération : {e}")
-        if st.session_state.get("_docx"):
+        if st.session_state.get(_k_docx):
             st.download_button(
-                "⬇️ Rapport (.docx)", st.session_state["_docx"],
+                "⬇️ Rapport (.docx)", st.session_state[_k_docx],
                 f"Rapport_Thermie_{_nom_fichier}.docx",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True)
@@ -944,12 +1281,12 @@ with ong[noms.index("📦 Livrables")]:
             with st.spinner("Composition du classeur…"):
                 try:
                     from thermie_debits.livrables import construire_xlsx_bytes
-                    st.session_state["_xlsx"] = construire_xlsx_bytes(res)
+                    st.session_state[_k_xlsx] = construire_xlsx_bytes(res)
                 except Exception as e:
                     st.error(f"Échec de génération : {e}")
-        if st.session_state.get("_xlsx"):
+        if st.session_state.get(_k_xlsx):
             st.download_button(
-                "⬇️ Classeur (.xlsx)", st.session_state["_xlsx"],
+                "⬇️ Classeur (.xlsx)", st.session_state[_k_xlsx],
                 f"Donnees_Thermie_{_nom_fichier}.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True)

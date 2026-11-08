@@ -25,6 +25,11 @@ MOTS_DATE = ["date", "heure", "time", "timestamp", "horodat", "jour", "aaaammjj"
 MOTS_TEMP = ["temp", "°c", "degr", "tw", "t_eau", "teau", "water", "eau",
              "valeur", "value", "tm", "t (", "t(", ", °c", "temp,",
              "rsanatemp", "rsana", "resultat", "résultat"]
+# Noms de colonne trop courts pour une recherche par sous-chaîne (« t » se
+# trouve partout) : ils ne sont reconnus que s'ils constituent le nom ENTIER.
+# « T » est la colonne de température du format d'échange DCE des chroniques
+# thermiques (onglet « chronique de température »).
+NOMS_TEMP_EXACTS = ["t", "t°", "t°c", "t (°c)", "t(°c)"]
 
 
 def _norm(s):
@@ -108,6 +113,71 @@ def _detecter_ligne_entete(df_brut, max_scan=15):
     return best_row
 
 
+N_LIGNES_EVAL_FEUILLE = 300
+
+
+def evaluer_feuilles(source, nom=""):
+    """
+    Évalue chaque feuille d'un classeur comme candidate à porter la chronique.
+
+    Pour chaque feuille : détection de l'en-tête et des colonnes date /
+    valeur sur ses N_LIGNES_EVAL_FEUILLE premières lignes, puis compte des
+    lignes qui portent À LA FOIS une date et une valeur numérique. Retourne
+    une liste de dicts {feuille, col_date, col_valeur, n_lignes_exploitables},
+    dans l'ordre du classeur. Une feuille illisible est rendue avec
+    n_lignes_exploitables = 0 et sa cause dans `erreur` — jamais omise.
+
+    Motif : les classeurs au format d'échange DCE placent les métadonnées de
+    pose en première feuille et la chronique en seconde. Retenir la première
+    feuille par défaut lisait les métadonnées comme une chronique.
+    """
+    feuilles = lister_feuilles(source, nom)
+    engine = "xlrd" if str(nom).lower().endswith(".xls") else "openpyxl"
+    out = []
+    for sh in feuilles:
+        buf = io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source
+        try:
+            brut = pd.read_excel(buf, sheet_name=sh, header=None, engine=engine,
+                                 nrows=N_LIGNES_EVAL_FEUILLE)
+        except Exception as e:                       # noqa: BLE001 — tracé
+            out.append(dict(feuille=sh, col_date=None, col_valeur=None,
+                            n_lignes_exploitables=0, erreur=str(e)))
+            continue
+        if brut.empty:
+            out.append(dict(feuille=sh, col_date=None, col_valeur=None,
+                            n_lignes_exploitables=0, erreur="feuille vide"))
+            continue
+        hdr = _detecter_ligne_entete(brut)
+        df = brut.iloc[hdr + 1:].copy()
+        df.columns = [str(c).strip() for c in brut.iloc[hdr].tolist()]
+        df = df.dropna(how="all")
+        cd, cv = deviner_colonnes(df)
+        n_ok = 0
+        if cd is not None and cv is not None:
+            val = pd.to_numeric(
+                df[cv].astype(str).str.replace(",", ".").str.replace(" ", ""),
+                errors="coerce")
+            n_ok = int((df[cd].notna() & val.notna()).sum())
+        out.append(dict(feuille=sh, col_date=cd, col_valeur=cv,
+                        n_lignes_exploitables=n_ok, erreur=None))
+    return out
+
+
+def detecter_feuille(source, nom=""):
+    """
+    Nom de la feuille qui porte le plus de lignes exploitables (date ET valeur
+    numérique). À égalité — y compris si aucune n'en porte —, la première
+    feuille du classeur, ce qui reproduit l'ancien comportement.
+    """
+    ev = evaluer_feuilles(source, nom)
+    if not ev:
+        return 0
+    meilleure = max(ev, key=lambda e: e["n_lignes_exploitables"])
+    if meilleure["n_lignes_exploitables"] == ev[0]["n_lignes_exploitables"]:
+        return ev[0]["feuille"]
+    return meilleure["feuille"]
+
+
 def lire_brut(source, nom="", n_lignes=None, feuille=None, ligne_entete=None):
     """
     Lit un CSV ou Excel en auto-détectant le format.
@@ -115,7 +185,9 @@ def lire_brut(source, nom="", n_lignes=None, feuille=None, ligne_entete=None):
     source : chemin de fichier OU bytes (upload Streamlit).
     nom    : nom du fichier (pour détecter l'extension). Si source est un
              chemin, nom est déduit automatiquement.
-    feuille : nom de feuille Excel (défaut : 1re feuille).
+    feuille : nom de feuille Excel (défaut : la feuille qui porte le plus de
+              lignes date + valeur, cf. `detecter_feuille` ; la 1re feuille
+              si aucune ne se distingue).
     ligne_entete : indice de la ligne d'en-tête (défaut : auto-détection).
 
     Retourne (df, meta) où meta décrit le format détecté.
@@ -128,7 +200,12 @@ def lire_brut(source, nom="", n_lignes=None, feuille=None, ligne_entete=None):
         engine = "xlrd" if str(nom).lower().endswith(".xls") else "openpyxl"
         buf = io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source
         feuilles = lister_feuilles(source, nom)
-        sh = feuille if feuille in feuilles else (feuilles[0] if feuilles else 0)
+        if feuille in feuilles:
+            sh = feuille
+        elif len(feuilles) > 1:
+            sh = detecter_feuille(source, nom)
+        else:
+            sh = feuilles[0] if feuilles else 0
         # lire brut sans header pour trouver la ligne d'en-tête
         brut = pd.read_excel(buf, sheet_name=sh, header=None, engine=engine)
         hdr = ligne_entete if ligne_entete is not None else _detecter_ligne_entete(brut)
@@ -189,7 +266,9 @@ def deviner_colonnes(df, mots_valeur=MOTS_TEMP):
     col_date = next((c for c in cols
                      if any(m in _norm(c) for m in MOTS_DATE)), None)
     candidates = [c for c in cols
-                  if any(m in _norm(c) for m in mots_valeur) and c != col_date]
+                  if (any(m in _norm(c) for m in mots_valeur)
+                      or _norm(c).strip() in NOMS_TEMP_EXACTS)
+                  and c != col_date]
 
     def _score(c):
         serie = pd.to_numeric(
@@ -208,3 +287,49 @@ def deviner_colonnes(df, mots_valeur=MOTS_TEMP):
         ranked = sorted(candidates, key=_score, reverse=True)
         col_val = ranked[0]
     return col_date, col_val
+
+
+# Colonnes d'identification reconnues dans les classeurs (format d'échange DCE
+# des chroniques thermiques et voisins). Ordre = priorité.
+COLS_COURS_EAU = ["RIV_NOM", "MILIEU", "COURS_EAU", "NOM_COURS_EAU"]
+COLS_POINT = ["NOM_STA_METIER", "COD_STA_METIER", "CODERHJ", "NOM_STATION",
+              "CODE_STA_SANDRE"]
+
+
+def identifier_sonde(source, nom=""):
+    """
+    Cherche, dans toutes les feuilles d'un classeur, le nom du cours d'eau et
+    l'identifiant du point de mesure (colonnes COLS_COURS_EAU / COLS_POINT,
+    insensibles à la casse). Retourne {cours_eau, point} ; une clé vaut None
+    si rien n'a été trouvé — c'est alors à l'opérateur de la saisir. CSV : on
+    ne cherche rien, les deux clés valent None.
+
+    Ne sert qu'à PRÉ-REMPLIR le tableau de rapprochement : la valeur reste
+    modifiable à l'écran et n'entre dans aucun calcul.
+    """
+    trouve = {"cours_eau": None, "point": None}
+    for sh in lister_feuilles(source, nom):
+        buf = io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source
+        engine = "xlrd" if str(nom).lower().endswith(".xls") else "openpyxl"
+        try:
+            brut = pd.read_excel(buf, sheet_name=sh, header=None, engine=engine,
+                                 nrows=20)
+        except Exception:                            # noqa: BLE001
+            continue        # feuille illisible : evaluer_feuilles le trace déjà
+        if brut.empty:
+            continue
+        hdr = _detecter_ligne_entete(brut)
+        entetes = {str(c).strip().upper(): j
+                   for j, c in enumerate(brut.iloc[hdr].tolist())}
+        corps = brut.iloc[hdr + 1:]
+        for cle, cols in (("cours_eau", COLS_COURS_EAU), ("point", COLS_POINT)):
+            if trouve[cle] is not None:
+                continue
+            for c in cols:
+                if c in entetes:
+                    v = corps.iloc[:, entetes[c]].dropna().astype(str).str.strip()
+                    v = v[v != ""]
+                    if len(v):
+                        trouve[cle] = v.iloc[0]
+                        break
+    return trouve

@@ -22,8 +22,8 @@ from typing import Optional
 # divergé de la valeur documentée, et le message d'accueil
 # orientait vers le déploiement pour un défaut qui était ici.
 # ============================================================
-__version__ = "4.6"
-VERSION_DATE = "2026-08-31"
+__version__ = "4.7"
+VERSION_DATE = "2026-11-08"
 
 _FICHIER_VERSION = Path(__file__).resolve().parent.parent / "VERSION.txt"
 try:
@@ -34,26 +34,19 @@ if _lignes_version and _lignes_version[0].strip():
     __version__ = _lignes_version[0].strip()
 
 VERSION_NOTES = (
-    "Treize correctifs de la chaîne allant de la lecture des fichiers à la "
-    "température normalisée. La détection des sondes hors de l'eau ne repose "
-    "plus sur un écart fixe de 4 °C entre l'eau et l'air, mais sur la "
-    "comparaison de chaque station à sa propre habitude au même mois, sur "
-    "l'année entière et non plus le seul été. Quand la relation air-eau ne "
-    "peut pas être établie, la correction climatique n'est pas appliquée et "
-    "le statut le dit, dans le rapport comme dans le classeur, avant les "
-    "chiffres qu'il qualifie. Les quatre étapes qui écartaient des données "
-    "sans laisser de trace publient désormais un tableau daté et motivé ; les "
-    "journées incomplètes sont signalées sans être exclues. Les moyennes "
-    "glissantes comptent des jours de calendrier et non des lignes, et les "
-    "lissages portent sur la série complète avant d'être restreints. La "
-    "normale de l'air se calcule sur le couple (mois, jour), insensible aux "
-    "années bissextiles ; les températures minimale et maximale de l'air ne "
-    "sont plus jetées à la lecture. Une famille d'indicateurs redondants est "
-    "retirée — le tableau mensuel passe de onze à huit colonnes. Les valeurs "
-    "par défaut de l'interface dérivent d'une source unique, et chaque "
-    "contrôle publie son état dans un onglet dédié, y compris quand il n'a "
-    "rien trouvé. Deux stations sur trente-deux ont changé de catégorie ; "
-    "partout ailleurs les catégories publiées sont inchangées."
+    "Plusieurs sondes en une fois. On peut déposer plusieurs sondes et "
+    "plusieurs fichiers d'air : un tableau de rapprochement rattache chaque "
+    "sonde à une station météo, se corrige à l'écran, s'enregistre et se "
+    "recharge. L'analyse tourne sur toutes les sondes cochées, une synthèse "
+    "les empile et tous les rapports se téléchargent en un ZIP. Dans un "
+    "classeur à plusieurs feuilles, la feuille qui porte la chronique est "
+    "détectée (format d'échange DCE : la chronique est en seconde feuille), "
+    "et la colonne « T » est reconnue comme température. Une station d'air "
+    "sans aucune température moyenne produisait l'erreur « cannot convert "
+    "float NaN to integer » : elle produit désormais un message qui nomme la "
+    "station. La colonne de température d'air choisie à l'écran est "
+    "appliquée aux exports Météo-France (elle était ignorée, TM étant "
+    "toujours lu). Aucun calcul n'est modifié."
 )
 
 

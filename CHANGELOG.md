@@ -1,5 +1,36 @@
 # Journal des versions
 
+## 4.7 — 2026-11-08
+- **Aucun calcul modifié.** Les changements portent sur la lecture des
+  fichiers et sur l'interface ; sur une même entrée lue de la même façon,
+  les résultats sont identiques à ceux de la 4.6.
+- **« cannot convert float NaN to integer ».** Une station d'air sans aucune
+  température moyenne (TM) — fréquent dans les exports Météo-France, où un
+  même nom de commune regroupe des postes anciens sans TM — donnait un air
+  vide, et le calcul des normales s'arrêtait sur cette erreur muette. Le
+  message nomme désormais la station et la colonne en cause.
+- **Colonne de température d'air appliquée.** Sur un export Météo-France, la
+  colonne choisie à l'écran (ex. TNTXM) était ignorée : TM était toujours
+  lu. Elle est désormais appliquée ; le défaut reste TM.
+- **Feuille Excel détectée.** Dans un classeur à plusieurs feuilles, la
+  feuille retenue par défaut est celle qui porte le plus de lignes date +
+  température, et non plus la première. Au format d'échange DCE, la
+  première feuille porte les métadonnées de pose et la chronique est en
+  seconde. À défaut de feuille qui se distingue, la première reste retenue.
+- **Colonne « T » reconnue** comme température (format DCE), en nom entier
+  seulement.
+- **Plusieurs sondes, plusieurs fichiers d'air.** Au-delà d'une sonde ou
+  d'un fichier d'air, un tableau de rapprochement sondes / station météo
+  s'affiche : feuille, colonnes, cours d'eau et point pré-remplis par
+  détection, station d'air choisie par sonde. Il s'enregistre en CSV et se
+  recharge. L'analyse tourne sur toutes les sondes cochées ; l'échec de
+  l'une n'arrête pas les autres et s'affiche dans la synthèse. Une
+  synthèse empile la fiche de chaque sonde (CSV), et tous les rapports
+  Word + Excel se téléchargent en un ZIP. Avec une seule sonde et un seul
+  fichier d'air, l'interface est celle de la 4.6.
+- **Tests autonomes** : `tests/test_lecture_multi.py` (fichiers fabriqués,
+  sans le corpus).
+
 ## 4.6 — 2026-08-31
 - **Ce qui change à la lecture.** La normalisation climatique et le
   contrôle qualité ne suivent plus les mêmes règles : sur trente-deux

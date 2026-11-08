@@ -648,9 +648,14 @@ def charger_air_brut(source, col_date=None, col_temp=None,
             if sts:
                 choix = sts[0]["code"]          # défaut : mieux couvert (CLI)
 
+        # Colonne de température : TM par défaut. Une autre colonne choisie
+        # explicitement à l'écran (ex. TNTXM) était jusqu'ici IGNORÉE sur ce
+        # format — l'interface affichait un choix qui n'était pas appliqué.
+        col_t = col_temp if col_temp else "TM"
+
         # Lecture par blocs, en ne conservant que la station retenue.
         usecols = ["NUM_POSTE", "NOM_USUEL", "AAAAMMJJ", "TM", "RR",
-                   "TN", "TX"]
+                   "TN", "TX", col_t]
         morceaux = []
         nom_ret = None
         reader = pd.read_csv(
@@ -669,23 +674,38 @@ def charger_air_brut(source, col_date=None, col_temp=None,
                 nn = chunk["NOM_USUEL"].dropna()
                 if nn.size:
                     nom_ret = str(nn.iloc[0])
-            keep = [c for c in ["AAAAMMJJ", "TM", "RR", "TN", "TX"]
-                    if c in chunk.columns]
+            keep = list(dict.fromkeys(
+                c for c in ["AAAAMMJJ", col_t, "RR", "TN", "TX"]
+                if c in chunk.columns))
             morceaux.append(chunk[keep])
         df = (pd.concat(morceaux, ignore_index=True) if morceaux
-              else pd.DataFrame(columns=["AAAAMMJJ", "TM"]))
+              else pd.DataFrame(columns=["AAAAMMJJ", col_t]))
+        if col_t not in df.columns:
+            raise ValueError(
+                f"Colonne de température d'air « {col_t} » absente du fichier "
+                f"Météo-France.")
 
         out = pd.DataFrame()
         out["date"] = _parse_dates_air(df["AAAAMMJJ"]).dt.date
         out["T_air"] = pd.to_numeric(
-            df["TM"].astype(str).str.replace(",", "."), errors="coerce")
+            df[col_t].astype(str).str.replace(",", "."), errors="coerce")
         for _c in ("RR", "TN", "TX"):
             if _c in df.columns:
                 out[_c] = pd.to_numeric(
                     df[_c].astype(str).str.replace(",", "."), errors="coerce")
         # `dropna` ne porte que sur la date et TM : une journée sans TN ni TX
         # reste lue, la marche 2 s'abstiendra sur elle.
+        n_lignes_station = len(out)
         out = out.dropna(subset=["date", "T_air"])
+        if out.empty:
+            qui = (f"station {nom_ret or choix_nom or ''} ({choix})"
+                   if (choix or choix_nom) else "fichier")
+            raise ValueError(
+                f"Air de référence vide : la {qui} ne porte aucune valeur de "
+                f"« {col_t} » ({n_lignes_station} journée(s) lue(s), toutes "
+                f"sans température). Choisir une autre station du fichier, ou "
+                f"une autre colonne de température.")
+        out.attrs["colonne_temperature"] = col_t
         if choix is not None or choix_nom is not None:
             out.attrs["station"] = {"code": choix or "", "nom": nom_ret or (choix_nom or "")}
         return out
@@ -727,6 +747,13 @@ def calculer_normales_ecarts(df_air, ref=REF_NORMALES, fenetre_lissage=10,
     Retourne (ecart_by_date, normales_lkp, diag).
     """
     df = df_air.copy()
+    if df.empty:
+        # Sans ce garde, `int(df["year"].min())` plus bas levait « cannot
+        # convert float NaN to integer », sans rien dire de la cause.
+        raise ValueError(
+            "Air de référence vide : aucune journée avec date et température "
+            "d'air lisibles. Vérifier la station et la colonne de température "
+            "retenues.")
     df["date_dt"] = pd.to_datetime(df["date"])
     df["year"]  = df["date_dt"].dt.year
     df["month"] = df["date_dt"].dt.month
