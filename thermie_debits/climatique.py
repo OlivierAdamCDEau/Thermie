@@ -16,12 +16,21 @@ séries annuelles courtes.
 """
 from __future__ import annotations
 import numpy as np
+from .print_style import mise_en_page
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
 from .io_data import charger_debit
 from .print_style import style_legend
+
+
+def _marge_legende(ax, frac=0.22):
+    """Réserve une bande libre en haut du cadre pour la légende : en « best »
+    sur un diagramme en barres pleine hauteur, elle recouvrait le haut des
+    barres une fois les polices relevées pour l'impression."""
+    y0, y1 = ax.get_ylim()
+    ax.set_ylim(y0, y1 + (y1 - y0) * frac)
 
 BLUE, RED, DKRED, AMBER, GREEN, PURPLE = (
     "#378ADD", "#C0392B", "#7B241C", "#B9770D", "#1E8449", "#7D3C98")
@@ -70,10 +79,11 @@ def volet_climatique(daily_eau, df_air, df, contexte, nom, output_dir,
             ax.set_xlabel("Année", fontsize=10)
             ax.set_title(f"{nom} — Température de l'air annuelle moyenne\n"
                         f"{int(yrs.min())}–{int(yrs.max())}", fontsize=11, fontweight="bold")
+            _marge_legende(ax)
             leg = ax.legend(fontsize=8.5, loc="best"); style_legend(leg)
             ax.grid(True, alpha=0.3)
             _annees_entieres(ax)
-            plt.tight_layout()
+            mise_en_page(plt.gcf(), "tight")  # rejoué après relèvement des polices
             figs.append(_clim_fin(fig, output_dir, "Clim1_Temperature_Air.png"))
 
     # ---- Clim5 — Précipitations annuelles ----
@@ -95,10 +105,11 @@ def volet_climatique(daily_eau, df_air, df, contexte, nom, output_dir,
             ax.set_xlabel("Année", fontsize=10)
             ax.set_title(f"{nom} — Précipitations annuelles (cumul)\n"
                         f"{int(yrs.min())}–{int(yrs.max())}", fontsize=11, fontweight="bold")
+            _marge_legende(ax)
             leg = ax.legend(fontsize=8.5, loc="best"); style_legend(leg)
             ax.grid(True, alpha=0.3)
             _annees_entieres(ax)
-            plt.tight_layout()
+            mise_en_page(plt.gcf(), "tight")  # rejoué après relèvement des polices
             figs.append(_clim_fin(fig, output_dir, "Clim5_Precipitations.png"))
 
     # ---- Clim2 / Clim3 — Débit : régimes annuels et débit moyen estival ----
@@ -138,7 +149,7 @@ def volet_climatique(daily_eau, df_air, df, contexte, nom, output_dir,
 
         all_yrs = sorted(daily.index.year.unique())
         if len(all_yrs) >= 2:
-            fig, ax = plt.subplots(figsize=(10.5, 4.8))
+            fig, ax = plt.subplots(figsize=(10.5, 4.8), layout="constrained")
             ax.set_facecolor("#f8f9fa")
             bottom = np.zeros(len(all_yrs))
             for lab, (serie, coul) in classes.items():
@@ -152,12 +163,13 @@ def volet_climatique(daily_eau, df_air, df, contexte, nom, output_dir,
                         f"{all_yrs[0]}–{all_yrs[-1]} — classes exprimées en % de la "
                         f"médiane des débits journaliers (base influencée)",
                         fontsize=11, fontweight="bold")
-            leg = ax.legend(fontsize=7.5, loc="upper center",
-                           bbox_to_anchor=(0.5, -0.16), ncol=3)
+            # Légende de figure « outside » : ancrée à l'axe (-0.16), elle
+            # chevauchait l'étiquette « Année » à la police d'impression.
+            leg = fig.legend(*ax.get_legend_handles_labels(), fontsize=7.5,
+                             loc="outside lower center", ncol=3)
             style_legend(leg)
             ax.grid(True, alpha=0.3, axis="y")
             _annees_entieres(ax)
-            plt.tight_layout()
             figs.append(_clim_fin(fig, output_dir, "Clim2_Regimes_Debit.png"))
 
         summer_q = dq[dq["Month"].isin([7, 8, 9])].groupby("Year")["Q"].mean()
@@ -179,10 +191,11 @@ def volet_climatique(daily_eau, df_air, df, contexte, nom, output_dir,
                         f"{int(yrs3.min())}–{int(yrs3.max())} — rouge foncé sous le seuil "
                         f"d'étiage, rouge clair sous 2× ce seuil, bleu au-delà",
                         fontsize=11, fontweight="bold")
+            _marge_legende(ax)
             leg = ax.legend(fontsize=8.5, loc="best"); style_legend(leg)
             ax.grid(True, alpha=0.3)
             _annees_entieres(ax)
-            plt.tight_layout()
+            mise_en_page(plt.gcf(), "tight")  # rejoué après relèvement des polices
             figs.append(_clim_fin(fig, output_dir, "Clim3_Debit_Estival.png"))
 
     # ---- Clim4 — Température de l'eau, comparaison inter-annuelle ----
@@ -212,9 +225,10 @@ def volet_climatique(daily_eau, df_air, df, contexte, nom, output_dir,
         ax.set_title(f"{nom} — Température de l'eau : comparaison inter-annuelle\n"
                     f"Seuils {contexte['label']} (T_eau_max brute, non normalisée)",
                     fontsize=11, fontweight="bold")
+        _marge_legende(ax)
         leg = ax.legend(fontsize=8, loc="best", ncol=min(len(years), 4)); style_legend(leg)
         ax.grid(True, alpha=0.3, axis="y")
-        plt.tight_layout()
+        mise_en_page(plt.gcf(), "tight")  # rejoué après relèvement des polices
         figs.append(_clim_fin(fig, output_dir, "Clim4_Temperature_Eau.png"))
 
     # ---- Clim6 — Précipitations × sévérité thermique estivale, taille des
@@ -283,7 +297,7 @@ def volet_climatique(daily_eau, df_air, df, contexte, nom, output_dir,
                         f"Taille des bulles ∝ nombre de jours d'étiage de l'année",
                         fontsize=11, fontweight="bold")
             ax.grid(True, alpha=0.3)
-            plt.tight_layout()
+            mise_en_page(plt.gcf(), "tight")  # rejoué après relèvement des polices
             figs.append(_clim_fin(fig, output_dir, "Clim6_Precip_vs_Stress.png"))
 
     print(f"  → {len(figs)} figure(s) climatique(s) produite(s)")

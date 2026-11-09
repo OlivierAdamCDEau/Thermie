@@ -56,15 +56,45 @@ def _save_upload(uploaded):
     return tmp.name
 
 
+# Génération différée (au clic) quand Streamlit la prend en charge : rendre
+# chaque figure en PNG ET en SVG à chaque rafraîchissement ralentirait l'app.
+_DL_DIFFERE = "callable" in (st.download_button.__doc__ or "")
+
+
+def _donnees_dl(fabrique):
+    """Fonction appelée au clic si possible, octets calculés tout de suite
+    sinon (versions de Streamlit antérieures à la génération différée)."""
+    return fabrique if _DL_DIFFERE else fabrique()
+
+
 def _fig_download(fig, label, filename):
-    from thermie_debits.print_style import make_print_ready
-    fig_impr = make_print_ready(fig)
+    """Deux boutons par figure : PNG (à coller dans Word) et SVG (vectoriel,
+    agrandissable sans perte). Même copie prête à imprimer pour les deux."""
+    from thermie_debits.print_style import figure_en_octets, FORMATS_FIGURE
+    base = os.path.splitext(filename)[0]
+    c_png, c_svg = st.columns(2)
+    c_png.download_button(
+        label, _donnees_dl(lambda: figure_en_octets(fig, "png")),
+        file_name=f"{base}.png", mime=FORMATS_FIGURE["png"], key=f"{base}.png",
+        help="PNG prêt à coller dans Word (police garantie ≥ 8 pt "
+             "à 16 cm de large en portrait, 24,7 cm en paysage).")
+    c_svg.download_button(
+        label.replace("PNG", "SVG") if "PNG" in label else f"{label} (SVG)",
+        _donnees_dl(lambda: figure_en_octets(fig, "svg")),
+        file_name=f"{base}.svg", mime=FORMATS_FIGURE["svg"], key=f"{base}.svg",
+        help="SVG vectoriel : s'agrandit sans perte (Word, Inkscape, "
+             "Illustrator). Le texte y est vectorisé : rendu identique "
+             "quel que soit le poste.")
+
+
+def _zip_figures_svg(res):
+    """Toutes les figures d'une analyse, en SVG, dans un ZIP."""
+    from thermie_debits.print_style import figure_en_octets, figures_de_resultats
     buf = io.BytesIO()
-    fig_impr.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    st.download_button(label, buf.getvalue(), file_name=filename,
-                       mime="image/png", key=filename,
-                       help="PNG prêt à coller dans Word (police garantie ≥ 8 pt "
-                            "à 16 cm de large en portrait, 24,7 cm en paysage).")
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for nom_f, fig in figures_de_resultats(res):
+            z.writestr(f"{nom_f}.svg", figure_en_octets(fig, "svg"))
+    return buf.getvalue()
 
 
 # ============================================================
@@ -709,7 +739,7 @@ if len(resultats) > 1:
         _df_synth.to_csv(index=False, sep=";").encode("utf-8-sig"),
         "synthese_multi_sondes.csv", "text/csv", use_container_width=True)
     with c2:
-        if st.button("📦 Générer tous les rapports (Word + Excel, ZIP)",
+        if st.button("📦 Générer tous les rapports (Word + Excel + figures SVG, ZIP)",
                      use_container_width=True, disabled=not _reussis):
             from thermie_debits.livrables import (construire_docx_bytes,
                                                   construire_xlsx_bytes)
@@ -728,6 +758,15 @@ if len(resultats) > 1:
                             z.writestr(f"{base}/Thermie_{base}.{ext}", fn(r))
                         except Exception as e:      # noqa: BLE001 — rendu
                             ko.append(f"{n} ({ext}) : {e}")
+                    # Figures vectorielles, mêmes mises en page que le rapport.
+                    from thermie_debits.print_style import (figure_en_octets,
+                                                            figures_de_resultats)
+                    for nom_f, fig_f in figures_de_resultats(r):
+                        try:
+                            z.writestr(f"{base}/figures/{nom_f}.svg",
+                                       figure_en_octets(fig_f, "svg"))
+                        except Exception as e:      # noqa: BLE001 — rendu
+                            ko.append(f"{n} (figure {nom_f}) : {e}")
                 barre.empty()
                 if ko:
                     z.writestr("ECHECS.txt", "\n".join(ko))
@@ -829,7 +868,7 @@ with ong[0]:
         # Régénérée à la volée (plutôt que la version figée du dernier
         # "Lancer l'analyse") pour que la période d'affichage réagisse
         # immédiatement, sans relancer tout le calcul.
-        nom_fig = res.config.sources.nom_cours_eau
+        nom_fig = res.config.sources.titre_figures
         fig_chron = figmod.fig_chronique(res.df, nom_fig, None, periode=periode_affichage)
         st.pyplot(fig_chron)
         _fig_download(fig_chron, "⬇️ PNG chronique", "Chronique_Thermique.png")
@@ -861,7 +900,7 @@ with ong[2]:
     if rq is not None and len(rq):
         st.write(f"**{len(rq)} enregistrement(s) écarté(s)**")
         if res.figures.get("qc") is not None:
-            nom_fig = res.config.sources.nom_cours_eau
+            nom_fig = res.config.sources.titre_figures
             fig_qc_live = figmod.fig_qc(res.daily_eau_brut, res.rapport_qc, res.df_air,
                                         nom_fig, None, periode=periode_affichage)
             st.pyplot(fig_qc_live)
@@ -892,7 +931,7 @@ with ong[4]:
     c1.metric(f"Stress chronique (>{v['seuil_chr']}°C)", f"{v['pct_chr']:.1f}%", v["cat_chr"])
     c2.metric(f"Létalité aiguë (>{v['seuil_aigu']}°C)", f"{v['n_aigu']} j", v["cat_aigu"])
     if res.figures.get("vulnerabilite") is not None:
-        nom_fig = res.config.sources.nom_cours_eau
+        nom_fig = res.config.sources.titre_figures
         fig_vuln_live = figmod.fig_vulnerabilite(res.vulnerabilite, res.contexte, nom_fig,
                                                  None, periode=periode_affichage)
         st.pyplot(fig_vuln_live)
@@ -982,7 +1021,7 @@ with ong[5]:
                 for e, src in srcs.items():
                     st.markdown(f"**{e.capitalize()}** — {src}")
     if res.figures.get("fraie") is not None:
-        nom_fig = res.config.sources.nom_cours_eau
+        nom_fig = res.config.sources.titre_figures
         fig_fraie_live = figmod.fig_fraie_croissance(res.fraie, res.contexte, nom_fig,
                                                      None, periode=periode_affichage)
         st.pyplot(fig_fraie_live)
@@ -1290,6 +1329,13 @@ with ong[noms.index("📦 Livrables")]:
                 f"Donnees_Thermie_{_nom_fichier}.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True)
+
+    st.download_button(
+        "🖼️ Toutes les figures de cette sonde (SVG, ZIP)",
+        _donnees_dl(lambda: _zip_figures_svg(res)),
+        f"Figures_SVG_{_nom_fichier}.zip", "application/zip",
+        key=f"_svgzip_{_nom_fichier}", use_container_width=True,
+        help="Figures vectorielles, mêmes mises en page que dans le rapport.")
 
     st.divider()
     st.markdown("**Fiche de synthèse de cette station**")

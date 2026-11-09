@@ -290,7 +290,7 @@ def construire_docx_bytes(res):
         from . import figures as figmod
         cor = res.indicateurs.get("correlations") or {}
         fig_cor_sans_q = figmod.fig_correlations_indicateurs(
-            cor, res.config.sources.nom_cours_eau, None,
+            cor, res.config.sources.titre_figures, None,
             cles={"ampl_vs_teau", "ecart_vs_teau"},
             suffixe_titre="Indicateurs vs température de l'eau",
             filename="Fig_Correlations_sans_Debit.png")
@@ -349,7 +349,7 @@ def construire_docx_bytes(res):
         from . import figures as figmod
         cor = (res.indicateurs or {}).get("correlations") or {}
         fig_cor_avec_q = figmod.fig_correlations_indicateurs(
-            cor, res.config.sources.nom_cours_eau, None,
+            cor, res.config.sources.titre_figures, None,
             cles={"ampl_vs_debit", "ecart_vs_debit"},
             suffixe_titre="Indicateurs vs débit (échelle logarithmique)",
             filename="Fig_Correlations_avec_Debit.png")

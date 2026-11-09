@@ -22,8 +22,8 @@ from typing import Optional
 # divergé de la valeur documentée, et le message d'accueil
 # orientait vers le déploiement pour un défaut qui était ici.
 # ============================================================
-__version__ = "4.7"
-VERSION_DATE = "2026-11-08"
+__version__ = "4.8"
+VERSION_DATE = "2026-11-09"
 
 _FICHIER_VERSION = Path(__file__).resolve().parent.parent / "VERSION.txt"
 try:
@@ -34,19 +34,17 @@ if _lignes_version and _lignes_version[0].strip():
     __version__ = _lignes_version[0].strip()
 
 VERSION_NOTES = (
-    "Plusieurs sondes en une fois. On peut déposer plusieurs sondes et "
-    "plusieurs fichiers d'air : un tableau de rapprochement rattache chaque "
-    "sonde à une station météo, se corrige à l'écran, s'enregistre et se "
-    "recharge. L'analyse tourne sur toutes les sondes cochées, une synthèse "
-    "les empile et tous les rapports se téléchargent en un ZIP. Dans un "
-    "classeur à plusieurs feuilles, la feuille qui porte la chronique est "
-    "détectée (format d'échange DCE : la chronique est en seconde feuille), "
-    "et la colonne « T » est reconnue comme température. Une station d'air "
-    "sans aucune température moyenne produisait l'erreur « cannot convert "
-    "float NaN to integer » : elle produit désormais un message qui nomme la "
-    "station. La colonne de température d'air choisie à l'écran est "
-    "appliquée aux exports Météo-France (elle était ignorée, TM étant "
-    "toujours lu). Aucun calcul n'est modifié."
+    "Figures des livrables relues une à une. Leur mise en page est désormais "
+    "recalculée après l'agrandissement des polices destiné à l'impression : "
+    "légendes, titres et étiquettes ne se chevauchent plus dans le rapport "
+    "Word ni dans les images téléchargées. Les légendes placées sous les "
+    "graphiques sont gérées par la mise en page, les mois des indicateurs "
+    "mensuels restent lisibles, les en-têtes de section des tableaux ne sont "
+    "plus tronqués, et le titre de chaque figure porte le point de mesure en "
+    "plus du cours d'eau. Chaque figure se télécharge aussi en SVG "
+    "(vectoriel), une à une, par sonde (ZIP) ou dans le ZIP multi-sondes. "
+    "Aucun calcul n'est modifié. Depuis la 4.7 : plusieurs sondes en une "
+    "fois, avec un tableau de rapprochement sondes / station météo."
 )
 
 
@@ -84,6 +82,18 @@ class SourcesConfig:
     nom_station_debit:  str = ""
     nom_station_meteo:  str = ""                 # station Météo-France de référence
     periode_normales:   str = "1991-2020"        # traçabilité (note §2.3)
+
+    @property
+    def titre_figures(self) -> str:
+        """Nom porté par le titre des figures : le cours d'eau, suivi du point
+        de mesure quand il est renseigné. Sans le point, les rapports de
+        plusieurs sondes d'un même cours d'eau portaient des figures au titre
+        identique, indiscernables une fois sorties du document."""
+        ce = (self.nom_cours_eau or "").strip()
+        pt = (self.localisation_sonde or "").strip()
+        if pt and pt != ce:
+            return f"{ce} · {pt}" if ce else pt
+        return ce
 
 
 # ============================================================

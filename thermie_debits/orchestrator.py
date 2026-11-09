@@ -97,6 +97,7 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
         # fichiers au lieu de les ranger dans le dossier.
         out = str(Path(out)) + "/"
     nom = config.sources.nom_cours_eau
+    nom_fig = config.sources.titre_figures   # titres de figures
     res = Resultats(config=config, contexte=ctx)
 
     # ---- 1. Chargement ----
@@ -227,22 +228,22 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
 
     # ---- 6. Figures thermiques (toujours) ----
     F = res.figures
-    F["chronique"]     = figmod.fig_chronique(df, nom, out, periode=config.periode_affichage)
-    F["qc"]            = figmod.fig_qc(daily_eau, rapport, df_air, nom, out, periode=config.periode_affichage)
-    F["sensibilite"]   = figmod.fig_sensibilite(sens, nom, out)
-    F["vulnerabilite"] = figmod.fig_vulnerabilite(vul, ctx, nom, out, periode=config.periode_affichage)
+    F["chronique"]     = figmod.fig_chronique(df, nom_fig, out, periode=config.periode_affichage)
+    F["qc"]            = figmod.fig_qc(daily_eau, rapport, df_air, nom_fig, out, periode=config.periode_affichage)
+    F["sensibilite"]   = figmod.fig_sensibilite(sens, nom_fig, out)
+    F["vulnerabilite"] = figmod.fig_vulnerabilite(vul, ctx, nom_fig, out, periode=config.periode_affichage)
     if fraie:
-        F["fraie"]     = figmod.fig_fraie_croissance(fraie, ctx, nom, out, periode=config.periode_affichage)
-    F["synthese_tableau"] = figmod.fig_synthese_tableau(sens, vul, sgvt, ctx, nom, out)
-    F["synthese_jauge"]   = figmod.fig_synthese_jauge(sgvt, nom, out)
+        F["fraie"]     = figmod.fig_fraie_croissance(fraie, ctx, nom_fig, out, periode=config.periode_affichage)
+    F["synthese_tableau"] = figmod.fig_synthese_tableau(sens, vul, sgvt, ctx, nom_fig, out)
+    F["synthese_jauge"]   = figmod.fig_synthese_jauge(sgvt, nom_fig, out)
 
     # ---- 6bis. Indicateurs bruts + corrélations ----
     from . import indicateurs as indmod
     res.indicateurs = indmod.calcul_indicateurs(df, sub_eau, verbose=verbose)
     F["correlations"] = figmod.fig_correlations_indicateurs(
-        res.indicateurs["correlations"], nom, out)
+        res.indicateurs["correlations"], nom_fig, out)
     F["indicateurs_resume"] = figmod.fig_indicateurs_resume(
-        res.indicateurs["table_mensuelle"], nom, out)
+        res.indicateurs["table_mensuelle"], nom_fig, out)
 
     # ---- 6ter. Test PRÉALABLE : le débit module-t-il la température ? ----
     # Postulat fondateur de toute l'approche « débits thermiques ». Le verdict
@@ -253,7 +254,7 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
             df, r2_min=getattr(config, "stress_corr_r2_min", 0.10),
             verbose=verbose)
         F["relation_debit_temp"] = figmod.fig_relation_debit_temperature(
-            res.relation_debit_temp, nom, out)
+            res.relation_debit_temp, nom_fig, out)
         rdt = res.relation_debit_temp
         if rdt.get("disponible") and rdt.get("verdict") in ("faible", "absente",
                                                             "inversee"):
@@ -264,7 +265,7 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
         # Matrice de lecture : « problème thermique » × « levier débit »
         res.matrice = core.matrice_diagnostic(
             vul, rdt, plancher_stress=getattr(config, "stress_plancher_pct", None))
-        F["matrice"] = figmod.fig_matrice_diagnostic(res.matrice, nom, out)
+        F["matrice"] = figmod.fig_matrice_diagnostic(res.matrice, nom_fig, out)
         if verbose:
             print(f"  Diagnostic d'ensemble : {res.matrice['libelle']}")
 
@@ -307,13 +308,13 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
             )
 
             F["debits_inflexion"] = figmod.fig_debits_inflexion(
-                dinf, sens, ctx, nom, out, q_fonc=cst["q_thermie_fonc"])
+                dinf, sens, ctx, nom_fig, out, q_fonc=cst["q_thermie_fonc"])
             F["debits_vuln"] = figmod.fig_vulnerabilite_debit(
-                dinf, ctx, nom, out, q_bio_final=cst["q_thermie_bio"])
+                dinf, ctx, nom_fig, out, q_bio_final=cst["q_thermie_bio"])
             F["debits_classes"] = figmod.fig_debits_classes(
-                cst, dinf, q_inf_series, ctx, nom, out, q_desinf=q_des_series)
+                cst, dinf, q_inf_series, ctx, nom_fig, out, q_desinf=q_des_series)
         elif dinf:
-            F["debits_inflexion"] = figmod.fig_debits_inflexion(dinf, sens, ctx, nom, out)
+            F["debits_inflexion"] = figmod.fig_debits_inflexion(dinf, sens, ctx, nom_fig, out)
 
     # ---- 8. Exports (mode CLI uniquement) ----
     if out:
@@ -328,7 +329,7 @@ def run(config: AnalyseConfig, verbose: bool = True) -> Resultats:
     # ---- 9. Volet climatique (bonus) ----
     if config.faire_volet_climatique:
         res.figures_climatiques = climmod.volet_climatique(
-            daily_eau, df_air, df, ctx, nom, out,
+            daily_eau, df_air, df, ctx, nom_fig, out,
             fichier_debit=config.sources.fichier_debit)
 
     if verbose:

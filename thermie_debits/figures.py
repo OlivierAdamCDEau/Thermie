@@ -47,6 +47,12 @@ def _locator_dates_adaptatif(ax, dates):
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
 
 
+def _mise_en_page_tight(fig, rect=None):
+    """`plt.tight_layout(...)` rejoué à chaque rendu (cf. print_style.mise_en_page)."""
+    from .print_style import mise_en_page
+    return mise_en_page(fig, "tight", **({"rect": rect} if rect else {}))
+
+
 def _finalise(fig, output_dir, filename):
     """Retourne la figure telle qu'autrice (proportions d'écran inchangées).
     Le plancher de lisibilité à l'impression n'est plus appliqué ici — il est
@@ -77,7 +83,7 @@ def fig_chronique(df, nom, output_dir, periode=None):
     cols_coupe = ["Tmh"] + (["Tmh_norm"] if "Tmh_norm" in df.columns else [])
     df = inserer_lacunes(df, col_date="date_dt", cols_valeurs=cols_coupe,
                          seuil_pas=3)
-    fig, ax = plt.subplots(figsize=(10.5, 5.4))
+    fig, ax = plt.subplots(figsize=(10.5, 5.4), layout="constrained")
     ax.set_facecolor("#f8f9fa")
     ax.fill_between(df["date_dt"], df["T_normale"], df["T_air"],
                     where=df["T_air"] >= df["T_normale"],
@@ -101,15 +107,18 @@ def fig_chronique(df, nom, output_dir, periode=None):
     ax.set_xlabel("Date", fontsize=11); ax.set_ylabel("Température (°C)", fontsize=11)
     ax.set_title(f"{nom} — Chronique thermique\nNormales 1991–2020, T air et Tmh",
                  fontsize=13, fontweight="bold", pad=15)
-    leg = ax.legend(fontsize=8.5, loc="upper center", bbox_to_anchor=(0.5, -0.24),
-                    ncol=3, frameon=True)
+    # Légende DE FIGURE « outside » : la mise en page contrainte lui réserve sa
+    # place sous l'étiquette « Date », quelle que soit la taille des polices.
+    # Ancrée à l'axe (bbox_to_anchor=(0.5, -0.24)), elle chevauchait cette
+    # étiquette dès que l'export relevait les polices pour l'impression.
+    leg = fig.legend(*ax.get_legend_handles_labels(), fontsize=8.5,
+                     loc="outside lower center", ncol=3, frameon=True)
     style_legend(leg)
     ax.grid(True, alpha=0.3)
     _locator_dates_adaptatif(ax, df["date_dt"])
     if periode:
         ax.set_xlim(periode[0], periode[1])
-    plt.xticks(rotation=30)
-    plt.tight_layout()
+    plt.setp(ax.get_xticklabels(), rotation=30)
     return _finalise(fig, output_dir, "Fig0_Chronique.png")
 
 
@@ -142,16 +151,22 @@ def fig_sensibilite(res, nom, output_dir):
     ax1.set_xlabel("T air (°C)", fontsize=11); ax1.set_ylabel("T eau moy (°C)", fontsize=11)
     ax1.set_title("Corrélation T air / T eau — Juin–Sept\n(axes à même échelle)",
                   fontsize=11, fontweight="bold")
-    leg = ax1.legend(fontsize=9, loc="upper left")
+    # Les statistiques rejoignent la légende, en haut à gauche — zone vide
+    # par construction (au-dessus de la droite de pente 1, l'eau n'est pas
+    # plus chaude que l'air). L'encadré séparé, en bas à droite, recouvrait
+    # le nuage de points.
+    from matplotlib.lines import Line2D
+    h, l = ax1.get_legend_handles_labels()
+    vide = Line2D([], [], ls="none")
+    stats = [f"m = {slope:.3f}  ·  R² = {r2:.3f}",
+             f"ρ Spearman = {res['r_spearman']:.4f}",
+             f"Robustesse |ρ−r| = {res['robustesse']:.4f}",
+             f"p (régr.) = {res['p_reg']:.5f}",
+             f"{res['sens_cat']}"]
+    leg = ax1.legend(h + [vide] * len(stats), l + stats, fontsize=9,
+                     loc="upper left", handlelength=1.6)
     style_legend(leg)
     ax1.grid(True, alpha=0.3)
-    textstr = (f"m = {slope:.3f}   |   R² = {r2:.3f}\n"
-               f"ρ_Spearman = {res['r_spearman']:.4f}\n"
-               f"Robustesse |ρ−r| = {res['robustesse']:.4f}\n"
-               f"p (régr.) = {res['p_reg']:.5f}\n{res['sens_cat']}")
-    ax1.text(0.98, 0.03, textstr, transform=ax1.transAxes, fontsize=9,
-             va="bottom", ha="right",
-             bbox=dict(boxstyle="round", facecolor="#ecf0f1", alpha=0.90))
 
     ax2 = axes[1]; ax2.axis("off")
     rows = [
@@ -160,17 +175,17 @@ def fig_sensibilite(res, nom, output_dir):
         ["p-value T_air", f'{res["p_x"]:.4f} — {"Normale" if res["p_x"]>0.05 else "Non-normale"}'],
         ["p-value T_eau", f'{res["p_y"]:.4f} — {"Normale" if res["p_y"]>0.05 else "Non-normale"}'],
         ["Test principal retenu", res["test_used"]],
-        ["── RÉGRESSION LINÉAIRE ──", ""],
+        ["RÉGRESSION LINÉAIRE", ""],
         ["Pente m", f'{slope:.4f}'],
         ["Intercept", f'{intercept:.4f}'],
         ["p-value (régression)", f'{res["p_reg"]:.5f}'],
-        ["── CORRÉLATIONS ──", ""],
+        ["CORRÉLATIONS", ""],
         ["r de Pearson", f'{res["r_pearson"]:.4f}  (p={res["p_pearson"]:.5f})'],
         ["ρ de Spearman", f'{res["r_spearman"]:.4f}  (p={res["p_spearman"]:.5f})'],
-        ["── INDICES ──", ""],
+        ["INDICES", ""],
         ["R² — Variance expliquée", f'{r2:.4f}  →  {res["r2_cat"]}'],
         ["Indice de robustesse |ρ−r|", f'{res["robustesse"]:.4f}  →  {res["rob_cat"]}'],
-        ["── SYNTHÈSE ──", ""],
+        ["SYNTHÈSE", ""],
         ["Catégorie de sensibilité", res["sens_cat"]],
     ]
     section_rows = {5, 9, 12, 15}
@@ -184,6 +199,8 @@ def fig_sensibilite(res, nom, output_dir):
     col_chars = [col_width_chars(0.5, ax2_width_in, fs_impr),
                 col_width_chars(0.5, ax2_width_in, fs_impr)]
     wrapped, counts = wrap_rows(rows, col_chars=col_chars)
+    for i in section_rows:              # bandeau sur toute la largeur
+        wrapped[i], counts[i] = rows[i], 1
     tbl = ax2.table(cellText=wrapped, colLabels=["Paramètre", "Valeur"],
                     cellLoc="left", loc="center", bbox=[0, 0, 1, 1])
     tbl.auto_set_font_size(False); tbl.set_fontsize(FS_ECRAN)
@@ -202,9 +219,13 @@ def fig_sensibilite(res, nom, output_dir):
             cell.set_facecolor("#fef9e7")
         elif row % 2 == 0:
             cell.set_facecolor("#f5f5f5")
+    from .print_style import bandeaux_sections, mise_en_page
+    bandeaux_sections(ax2, tbl, sorted(section_rows), counts,
+                      [rows[i][0] for i in sorted(section_rows)],
+                      ["#1a5276"] * len(section_rows), FS_ECRAN)
     ax2.set_title("Résultats — Analyse de sensibilité", fontsize=11, fontweight="bold", pad=15)
-    plt.suptitle(f"{nom} — Sensibilité thermique", fontsize=13, fontweight="bold", y=1.01)
-    plt.tight_layout()
+    plt.suptitle(f"{nom} — Sensibilité thermique", fontsize=13, fontweight="bold")
+    mise_en_page(fig, "tight")
     return _finalise(fig, output_dir, "Fig1_Sensibilite.png")
 
 
@@ -231,7 +252,8 @@ def fig_vulnerabilite(vul, contexte, nom, output_dir, periode=None):
         y0, y1 = periode[0].year, periode[1].year
         annees = [a for a in annees if y0 <= a <= y1] or annees
 
-    fig, axes = plt.subplots(2, 1, figsize=(9.5, 8.2), sharex=True)
+    fig, axes = plt.subplots(2, 1, figsize=(9.5, 8.2), sharex=True,
+                             layout="constrained")
     fig.patch.set_facecolor("white")
     ax1, ax2 = axes[0], axes[1]
     ax1.set_facecolor("#f8f9fa"); ax2.set_facecolor("#f8f9fa")
@@ -284,14 +306,13 @@ def fig_vulnerabilite(vul, contexte, nom, output_dir, periode=None):
     for h, l in zip(h1, l1):
         if l not in labels:
             handles.append(h); labels.append(l)
-    leg = fig.legend(handles, labels, fontsize=8, loc="upper center",
-                     bbox_to_anchor=(0.5, 0.02), ncol=min(len(annees) + 2, 8),
+    leg = fig.legend(handles, labels, fontsize=8, loc="outside lower center",
+                     ncol=min(len(annees) + 2, 5),
                      title="Année", title_fontsize=8.5)
     style_legend(leg)
     _note_cycle_couleurs(ax2, annees)
-    plt.suptitle(f"{nom} — Vulnérabilité thermique\n{contexte['label']}",
-                 fontsize=13, fontweight="bold", y=1.03)
-    plt.tight_layout(rect=[0, 0.05, 1, 1])
+    fig.suptitle(f"{nom} — Vulnérabilité thermique\n{contexte['label']}",
+                 fontsize=13, fontweight="bold")
     return _finalise(fig, output_dir, "Fig2_Vulnerabilite.png")
 
 
@@ -383,8 +404,13 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir, periode=None):
     from .core import segments_valides
 
     n = len(sous)
-    fig, axes = plt.subplots(n, 1, figsize=(9.5, 5.9 * n), squeeze=False)
+    fig, axes = plt.subplots(n, 1, figsize=(9.5, 5.9 * n), squeeze=False,
+                             layout="constrained")
     fig.patch.set_facecolor("white")
+    from .print_style import table_fontsize
+    # Police que l'export imposera : les décalages en points ci-dessous en
+    # dépendent, ils sont donc calculés pour elle et non pour l'écran.
+    fs_min = table_fontsize(9.5)
 
     for i, s in enumerate(sous):
         ax = axes[i][0]
@@ -466,31 +492,49 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir, periode=None):
             if len(mois_syn):
                 x_mid = mois_syn[len(mois_syn) // 2]
                 lab_p = NOMS_PHASE.get(ph["cle"], ph["cle"])
-                ax.annotate(lab_p, xy=(x_mid, 1.04), xycoords=trans,
-                            fontsize=9.5, ha="center", va="bottom",
+                # DANS le cadre, en haut : au-dessus, ils entraient en
+                # collision avec la ligne d'information et le titre une fois
+                # les polices relevées pour l'impression.
+                ax.annotate(lab_p, xy=(x_mid, 0.97), xycoords=trans,
+                            fontsize=9.5, ha="center", va="top",
                             fontweight="bold", color="#34495E",
-                            annotation_clip=False,
+                            annotation_clip=False, zorder=6,
                             bbox=dict(boxstyle="round,pad=0.22", facecolor="#EAECEE",
                                       edgecolor="#AEB6BF", alpha=0.95))
 
         limitant = (s["espece"] == fraie_res.get("espece_limitante"))
+        # Deux lignes : sur une seule, le titre débordait la largeur de la
+        # figure dès que l'espèce était retenue et les campagnes multiples.
+        suite = " · ".join(x for x in [
+            "★ retenu" if limitant else "",
+            f"{len(campagnes)} campagnes superposées" if multi else ""] if x)
         titre = (f"{s['espece'].capitalize()}  |  optimum {s['pct_optimum']:.0f}% · "
-                 f"élargie {s['pct_elargie']:.0f}% · létal {s['pct_letal']:.0f}% "
-                 f"→ P={s['P']} ({s['cat']})"
-                 f"{'   ★ retenu' if limitant else ''}"
-                 f"{f'  —  {len(campagnes)} campagnes superposées' if multi else ''}")
+                 f"élargie {s['pct_elargie']:.0f}% · létal {s['pct_letal']:.0f}%\n"
+                 f"P={s['P']} ({s['cat']})" + (f"  —  {suite}" if suite else ""))
+        # La ligne d'information (gris) se loge entre le cadre et le titre :
+        # le `pad` du titre lui réserve deux lignes à la police d'impression.
         ax.set_title(titre, fontsize=10.5, fontweight="bold",
-                     color="#1A5276" if limitant else "#555555", pad=44)
+                     color="#1A5276" if limitant else "#555555",
+                     pad=6 + 2 * 1.35 * fs_min)
         ax.set_xlabel("Date (calendrier saisonnier)", fontsize=9.5, labelpad=10)
         ax.set_ylabel("T° eau normalisée (°C)", fontsize=9.5)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
         ax.tick_params(axis="x", labelsize=8, labelrotation=30)
         ax.tick_params(axis="y", labelsize=8.5)
         ax.grid(True, alpha=0.3)
-        ncol_leg = min(len(campagnes), 6) if multi else 2
         titre_leg = "Campagne" if multi else None
-        leg = ax.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.32),
-                        ncol=ncol_leg, frameon=True, title=titre_leg, title_fontsize=8.5)
+        if n == 1:
+            # Légende de figure « outside » : placée par la mise en page sous
+            # l'étiquette d'axe. Ancrée à l'axe (-0.32), son titre recouvrait
+            # « Date (calendrier saisonnier) ».
+            leg = fig.legend(*ax.get_legend_handles_labels(), fontsize=8,
+                             loc="outside lower center", ncol=3, frameon=True,
+                             title=titre_leg, title_fontsize=8.5)
+        else:
+            # Plusieurs espèces : une légende par panneau, à droite du cadre.
+            leg = ax.legend(fontsize=8, loc="center left",
+                            bbox_to_anchor=(1.01, 0.5), frameon=True,
+                            title=titre_leg, title_fontsize=8.5)
         style_legend(leg)
         _note_cycle_couleurs(ax, [c["date_dt"].min().year for c in campagnes])
 
@@ -498,12 +542,14 @@ def fig_fraie_croissance(fraie_res, contexte, nom, output_dir, periode=None):
                 f"Sévérité moyenne (/3) : {s['sev_moy']:.2f}  ·  "
                 f"Froid {'bloquant (échec)' if s.get('froid_bloquant') else 'ralentissant'}  ·  "
                 f"[info] % brut hors optimum : {s.get('pct_brut', float('nan')):.0f}%")
-        ax.text(0.5, 1.22, info, transform=ax.transAxes, fontsize=7.8, ha="center",
-               va="bottom", color="#7F8C8D")
+        info = info.replace("  ·  Froid", "\nFroid")       # deux lignes
+        ax.annotate(info, xy=(0.5, 1.0), xycoords="axes fraction",
+                    xytext=(0, 3), textcoords="offset points", fontsize=7.8,
+                    ha="center", va="bottom", color="#7F8C8D",
+                    annotation_clip=False)
 
-    plt.suptitle(f"{nom} — Vulnérabilité fraie-croissance par phase\n"
-                 f"{contexte['label']}", fontsize=13, fontweight="bold", y=1.0)
-    plt.tight_layout()
+    fig.suptitle(f"{nom} — Vulnérabilité fraie-croissance par phase\n"
+                 f"{contexte['label']}", fontsize=13, fontweight="bold")
     return _finalise(fig, output_dir, "Fig3_Fraie_Croissance.png")
 
 
@@ -610,8 +656,13 @@ def fig_synthese_tableau(sens_res, vul_res, sgvt_res, contexte, nom, output_dir)
             # réduit progressivement du haut vers le bas de la ligne).
             cell.set_edgecolor(fill)
             cell.set_linewidth(1.2)
+    from .print_style import bandeaux_sections, mise_en_page
+    idx_sec = [i for i, r in enumerate(ROWS) if r[4]]
+    bandeaux_sections(ax_t, tbl, idx_sec, counts,
+                      [rows_wrapped[i][0] for i in idx_sec],
+                      [ROWS[i][2] for i in idx_sec], FS_ECRAN)
     ax_t.set_title(f"Tableau de synthèse — {ctx}", fontsize=13, fontweight="bold", pad=15)
-    plt.tight_layout()
+    mise_en_page(fig, "tight")
     return _finalise(fig, output_dir, "Fig3a_Synthese_Tableau.png")
 
 
@@ -647,7 +698,7 @@ def fig_synthese_jauge(sgvt_res, nom, output_dir):
     ax_g.axis("off")
     ax_g.set_title(f"{nom} — Score Global de Vulnérabilité Thermique\n"
                    "(information d'appoint)", fontsize=13, fontweight="bold", pad=12)
-    plt.tight_layout()
+    _mise_en_page_tight(plt.gcf())
     return _finalise(fig, output_dir, "Fig3b_Synthese_Jauge.png")
 
 
@@ -665,7 +716,7 @@ def fig_qc(daily_brut, rapport, df_air, nom, output_dir, periode=None):
     b["date_dt"] = pd.to_datetime(b["date"])
     b = inserer_lacunes(b, col_date="date_dt", cols_valeurs=["T_eau_max", "T_air"],
                         seuil_pas=3)
-    fig, ax = plt.subplots(figsize=(10.5, 4.8))
+    fig, ax = plt.subplots(figsize=(10.5, 4.8), layout="constrained")
     ax.set_facecolor("#f8f9fa")
     ax.plot(b["date_dt"], b["T_eau_max"], color="#95a5a6", lw=0.8, alpha=0.6, label="T_eau_max brute")
     ax.plot(b["date_dt"], b["T_air"], color="#e67e22", lw=0.8, alpha=0.5, label="T_air")
@@ -679,13 +730,17 @@ def fig_qc(daily_brut, rapport, df_air, nom, output_dir, periode=None):
     ax.set_xlabel("Date", fontsize=11); ax.set_ylabel("Température (°C)", fontsize=11)
     ax.set_title(f"{nom} — Contrôle qualité : enregistrements écartés\n"
                  f"{len(rapport)} enreg. filtrés", fontsize=12, fontweight="bold")
-    leg = ax.legend(fontsize=8.5, loc="upper right")
+    # Sous le graphique : dans le cadre (« upper right »), elle recouvrait
+    # précisément les points écartés qu'elle devait légender.
+    h, l = ax.get_legend_handles_labels()
+    leg = fig.legend(h, l, fontsize=8.5, loc="outside lower center",
+                     ncol=min(len(h), 4))
     style_legend(leg)
     ax.grid(True, alpha=0.3)
     _locator_dates_adaptatif(ax, b["date_dt"])
     if periode:
         ax.set_xlim(periode[0], periode[1])
-    plt.xticks(rotation=30); plt.tight_layout()
+    plt.setp(ax.get_xticklabels(), rotation=30)
     return _finalise(fig, output_dir, "FigQC_Artefacts.png")
 
 
@@ -719,14 +774,17 @@ def fig_debits_inflexion(debit_res, sens_res, contexte, nom, output_dir, q_fonc=
     ax1.set_ylabel("Sensibilité thermique m", fontsize=11)
     ax1.set_title("Sensibilité m en fonction du débit\n(fenêtre glissante · juin–sept)",
                   fontsize=11, fontweight="bold")
-    leg1 = ax1.legend(fontsize=8.5, loc="upper right"); style_legend(leg1)
     ax1.grid(True, alpha=0.3)
     val_c = "#1e8449" if valide else "#e74c3c"
-    val_bg = "#eafaf1" if valide else "#fce4ec"
-    ax1.text(0.02, 0.98, ('OK' if valide else 'X') + f"  Rupture {'validée' if valide else 'non validée'}",
-             transform=ax1.transAxes, fontsize=9, va="top", ha="left",
-             fontweight="bold", color=val_c,
-             bbox=dict(boxstyle="round,pad=0.4", facecolor=val_bg, edgecolor=val_c, linewidth=1.5))
+    # Le verdict devient le TITRE de la légende : en cartouche séparé (en haut
+    # à gauche), il était recouvert par la légende (en haut à droite) dès que
+    # les polices étaient relevées pour l'impression.
+    leg1 = ax1.legend(fontsize=8.5, loc="upper right",
+                      title=('OK' if valide else 'X') +
+                      f"  Rupture {'validée' if valide else 'non validée'}",
+                      title_fontsize=9)
+    leg1.get_title().set_color(val_c); leg1.get_title().set_fontweight("bold")
+    style_legend(leg1)
 
     ax2 = axes[1]; ax2.set_facecolor("#f8f9fa")
     df_e = debit_res["df_ete"]
@@ -756,7 +814,7 @@ def fig_debits_inflexion(debit_res, sens_res, contexte, nom, output_dir, q_fonc=
     ax2.grid(True, alpha=0.3)
     plt.suptitle(f"{nom} — Débit d'inflexion thermique (Q_thermie_fonc · appoint)",
                  fontsize=13, fontweight="bold", y=1.01)
-    plt.tight_layout()
+    _mise_en_page_tight(plt.gcf())
     return _finalise(fig, output_dir, "Fig4_Debits_Inflexion.png")
 
 
@@ -772,7 +830,8 @@ def fig_vulnerabilite_debit(debit_res, contexte, nom, output_dir, q_bio_final=No
     seuil_vpct = debit_res.get("seuil_vuln_pct", 5.0)
     seuil_chr = contexte["seuil_chr"]; seuil_aigu = contexte["seuil_aigu"]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10.5, 8.6), sharex=True)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10.5, 8.6), sharex=True,
+                                   layout="constrained")
     fig.patch.set_facecolor("white")
     ax1.set_facecolor("#f8f9fa")
     if len(debit_res.get("vuln_roll", [])) > 0:
@@ -789,6 +848,7 @@ def fig_vulnerabilite_debit(debit_res, contexte, nom, output_dir, q_bio_final=No
         ax1.axvspan(0, q_vuln_chr, alpha=0.06, color="#c0392b", zorder=0)
     # Volet stress désactivé : le signaler explicitement sur la figure
     ds = debit_res.get("diag_stress", {})
+    avert_stress = None
     if ds and not ds.get("stress_actif", True):
         def _f(v):
             return f"{v:+.2f}" if (v is not None and v == v) else "n.d."
@@ -800,14 +860,17 @@ def fig_vulnerabilite_debit(debit_res, contexte, nom, output_dir, q_bio_final=No
                f"corr. partielle (à air égal) = {_f(ds.get('r_partielle'))} "
                f"(R²={ds.get('r2_partielle', float('nan')):.2f})\n"
                f"→ courbe affichée à titre de diagnostic seulement")
-        ax1.text(0.98, 0.97, txt, transform=ax1.transAxes, fontsize=8.5,
-                 va="top", ha="right", color="#7B241C",
-                 bbox=dict(boxstyle="round,pad=0.5", facecolor="#FDEDEC",
-                           edgecolor="#C0392B", alpha=0.95))
+        # Devient le titre de la légende (plus bas) : en encadré séparé, il
+        # chevauchait la légende une fois les polices relevées.
+        avert_stress = txt
     ax1.set_ylabel(f"% jours Tmh_norm > {seuil_chr}°C", fontsize=11)
     ax1.set_title("Vulnérabilité chronique en fonction du débit (stress systémique · Tmh normalisée)",
                   fontsize=11, fontweight="bold")
-    leg1 = ax1.legend(fontsize=8.5, loc="center right"); style_legend(leg1)
+    leg1 = ax1.legend(fontsize=8.5, loc="center right",
+                      title=avert_stress, title_fontsize=8.5)
+    if avert_stress:
+        leg1.get_title().set_color("#7B241C")
+    style_legend(leg1)
     ax1.grid(True, alpha=0.3); ax1.set_ylim(bottom=0)
 
     ax2.set_facecolor("#f8f9fa")
@@ -833,15 +896,16 @@ def fig_vulnerabilite_debit(debit_res, contexte, nom, output_dir, q_bio_final=No
         comp = []
         if q_vuln_chr is not None: comp.append(f"stress={q_vuln_chr:.3f}")
         if q_vuln_aig is not None: comp.append(f"létal={q_vuln_aig:.3f}")
-        fig.text(0.5, 0.01,
-                 f"▶ Q_thermie_bio (PRINCIPAL) = {q_bio_final:.3f} m³/s  "
-                 f"(= max({', '.join(comp)}) × 1.10)",
-                 ha="center", fontsize=11, fontweight="bold", color="#1a5276",
-                 bbox=dict(boxstyle="round,pad=0.5", facecolor="#D4E6F1",
-                           edgecolor="#1a5276", linewidth=2))
-    plt.suptitle(f"{nom} — Débit seuil de vulnérabilité (Q_thermie_bio · PRINCIPAL)",
-                 fontsize=13, fontweight="bold", y=1.01)
-    plt.tight_layout(rect=[0, 0.04, 1, 0.98])
+        # `supxlabel` : placé par la mise en page contrainte SOUS l'étiquette
+        # d'axe. En `fig.text` à hauteur fixe, il pouvait la recouvrir.
+        fig.supxlabel(
+            f"▶ Q_thermie_bio (PRINCIPAL) = {q_bio_final:.3f} m³/s  "
+            f"(= max({', '.join(comp)}) × 1.10)",
+            fontsize=11, fontweight="bold", color="#1a5276",
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="#D4E6F1",
+                      edgecolor="#1a5276", linewidth=2))
+    fig.suptitle(f"{nom} — Débit seuil de vulnérabilité (Q_thermie_bio · PRINCIPAL)",
+                 fontsize=13, fontweight="bold")
     return _finalise(fig, output_dir, "Fig5_Debit_Q_thermie_bio.png")
 
 
@@ -911,7 +975,7 @@ def fig_debits_classes(cst_res, debit_res, q_influence, contexte, nom, output_di
     leg = ax.legend(fontsize=8.5, loc="upper left"); style_legend(leg)
     ax.grid(True, alpha=0.3, which="both")
     ax.set_xlim(0, 100)
-    plt.tight_layout()
+    _mise_en_page_tight(plt.gcf())
     return _finalise(fig, output_dir, "Fig6_Debits_Classes_PNDA.png")
 
 
@@ -942,7 +1006,8 @@ def fig_correlations_indicateurs(correlations, nom, output_dir, cles=None,
     n = len(dispo)
     ncols = 2
     nrows = (n + 1) // 2
-    fig, axes = plt.subplots(nrows, ncols, figsize=(10.5, 4.3 * nrows), squeeze=False)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(10.5, 4.3 * nrows), squeeze=False,
+                             layout="constrained")
     fig.patch.set_facecolor("white")
     couleurs = {"ampl_vs_debit": "#2471A3", "ampl_vs_teau": "#1E8449",
                 "ecart_vs_debit": "#B9770D", "ecart_vs_teau": "#7D3C98"}
@@ -983,8 +1048,7 @@ def fig_correlations_indicateurs(correlations, nom, output_dir, cles=None,
     titre = f"{nom} — Corrélations des indicateurs thermiques"
     if suffixe_titre:
         titre += f"\n{suffixe_titre}"
-    plt.suptitle(titre, fontsize=13, fontweight="bold", y=1.02)
-    plt.tight_layout()
+    fig.suptitle(titre, fontsize=13, fontweight="bold")
     return _finalise(fig, output_dir, filename or "Fig_Correlations_Indicateurs.png")
 
 
@@ -1071,7 +1135,7 @@ def fig_relation_debit_temperature(rel, nom, output_dir):
     plt.suptitle(f"{nom} — Le débit module-t-il la température de l'eau ?\n"
                  f"{rel['libelle']}", fontsize=12.5, fontweight="bold",
                  color=col, y=1.02)
-    plt.tight_layout()
+    _mise_en_page_tight(plt.gcf())
     return _finalise(fig, output_dir, "Fig_Relation_Debit_Temperature.png")
 
 
@@ -1137,7 +1201,7 @@ def fig_matrice_diagnostic(mat, nom, output_dir):
     plt.suptitle(f"{nom} — Que permet de conclure l'approche thermique ?\n"
                  f"{mat['libelle']}", fontsize=13, fontweight="bold",
                  color=mat["couleur"], y=1.0)
-    plt.tight_layout()
+    _mise_en_page_tight(plt.gcf())
     return _finalise(fig, output_dir, "Fig_Matrice_Diagnostic.png")
 
 
@@ -1155,7 +1219,10 @@ def fig_indicateurs_resume(table, nom, output_dir):
         return None
     row_an = table[table["Période"] == "Année"]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.6))
+    # Panneaux SUPERPOSÉS et non côte à côte : à la police d'impression, douze
+    # libellés de mois ne tenaient pas sous un demi-panneau et se chevauchaient.
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7.6), sharex=True,
+                                   layout="constrained")
     fig.patch.set_facecolor("white")
     x = np.arange(len(t))
     mois = t["Période"].tolist()
@@ -1171,10 +1238,11 @@ def fig_indicateurs_resume(table, nom, output_dir):
         if pd.notna(v):
             ax1.axhline(v, color="#7D3C98", lw=1.6, ls=":",
                         label=f"Tmm30j annuel brut ({v:.1f}°C)")
-    ax1.set_xticks(x); ax1.set_xticklabels(mois, rotation=30, ha="right")
     ax1.set_ylabel("Température (°C)", fontsize=10)
     ax1.set_title("Tmax / Tmin mensuelles", fontsize=11, fontweight="bold")
-    leg1 = ax1.legend(fontsize=7.5, loc="best"); style_legend(leg1)
+    # Hors du cadre, à droite : « best » la posait sur la courbe des Tmax.
+    leg1 = ax1.legend(fontsize=7.5, loc="center left", bbox_to_anchor=(1.01, 0.5))
+    style_legend(leg1)
     ax1.grid(True, alpha=0.3)
 
     ax2.set_facecolor("#f8f9fa")
@@ -1182,13 +1250,12 @@ def fig_indicateurs_resume(table, nom, output_dir):
     sig = t["Ampl. σ (°C)"].fillna(0).values
     ax2.bar(x, moy, yerr=sig, color="#F5B041", edgecolor="#B9770D",
            alpha=0.85, capsize=3, error_kw=dict(lw=1.2, ecolor="#7E5109"))
-    ax2.set_xticks(x); ax2.set_xticklabels(mois, rotation=30, ha="right")
-    ax2.set_ylabel("Amplitude nycthémérale (°C)", fontsize=10)
+    ax2.set_xticks(x); ax2.set_xticklabels(mois)
+    ax2.set_ylabel("Amplitude\nnycthémérale (°C)", fontsize=10)
     ax2.set_title("Amplitude jour/nuit mensuelle\n(moyenne ± écart-type)",
                   fontsize=11, fontweight="bold")
     ax2.grid(True, alpha=0.3, axis="y")
 
-    plt.suptitle(f"{nom} — Indicateurs thermiques mensuels", fontsize=13,
-                 fontweight="bold", y=1.03)
-    plt.tight_layout()
+    fig.suptitle(f"{nom} — Indicateurs thermiques mensuels", fontsize=13,
+                 fontweight="bold")
     return _finalise(fig, output_dir, "Fig_Indicateurs_Resume.png")

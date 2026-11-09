@@ -49,6 +49,8 @@ def enforce_min_fontsize(fig, cap=FONT_FLOOR_CAP, target_cm=PORTRAIT_CM):
     w_in = fig.get_size_inches()[0]
     floor = min(min_fontsize_for_print(w_in, target_cm=target_cm), cap)
     for txt in fig.findobj(matplotlib.text.Text):
+        if getattr(txt, "_taille_fixe", False):
+            continue        # aligné sur un tableau, dont le texte n'est pas relevé
         try:
             cur = txt.get_fontsize()
             if cur is not None and cur < floor:
@@ -151,3 +153,84 @@ def col_width_chars(width_frac, fig_width_in, fontsize_pt, avg_char_ratio=0.56):
     """
     width_pt = width_frac * fig_width_in * 72
     return max(6, int(width_pt / (fontsize_pt * avg_char_ratio)))
+
+
+def mise_en_page(fig, moteur="tight", **kw):
+    """
+    Attache un moteur de mise en page À LA FIGURE au lieu d'appeler
+    `plt.tight_layout()` une fois pour toutes.
+
+    Motif : `make_print_ready` agrandit les polices d'une copie de la figure
+    pour l'impression. Avec un `tight_layout()` ponctuel, les marges restaient
+    celles calculées pour les petites polices d'écran : étiquettes, légendes
+    et titres se chevauchaient dans le rapport Word et les PNG. Un moteur
+    attaché est rejoué à chaque rendu — donc aussi après l'agrandissement.
+
+    moteur « tight » : même calcul qu'avant (kw : rect, pad...).
+    moteur « constrained » : requis pour les légendes de figure placées
+    « outside » (sous les axes), que « tight » ignore.
+    """
+    fig.set_layout_engine(moteur, **kw)
+    return fig
+
+
+def bandeaux_sections(ax, tbl, lignes, counts, textes, couleurs_txt,
+                      fontsize, has_header=True, x=0.012):
+    """
+    Écrit le libellé des lignes de section d'un tableau matplotlib PAR-DESSUS
+    la ligne entière, au lieu de le laisser dans la première cellule.
+
+    Motif : dans une ligne de section « fusionnée » (même fond sur toutes les
+    cellules), la cellule suivante se dessinait par-dessus le texte de la
+    première : « VULNÉRABILITÉ ESTIVALE · Salmo… » était tronqué. Le texte de
+    la cellule est vidé et remplacé par un texte d'axe, au-dessus du tableau.
+
+    lignes : indices (0-based, hors en-tête) des lignes de section ;
+    counts : nombre de lignes de texte de chaque ligne (cf. wrap_rows).
+    Le tableau doit occuper tout l'axe (bbox=[0, 0, 1, 1]).
+    """
+    offset = 1 if has_header else 0
+    unit = 1.0 / (offset + sum(counts))
+    for i, txt, coul in zip(lignes, textes, couleurs_txt):
+        haut = 1.0 - unit * (offset + sum(counts[:i]))
+        y = haut - unit * counts[i] / 2.0
+        tbl[(i + offset, 0)].get_text().set_text("")
+        t = ax.text(x, y, txt, transform=ax.transAxes, ha="left", va="center",
+                    fontsize=fontsize, fontweight="bold", color=coul, zorder=10,
+                    clip_on=False)
+        # Même taille que le texte des cellules, que l'export ne relève pas
+        # (les cellules d'un tableau échappent à `findobj`).
+        t._taille_fixe = True
+
+
+FORMATS_FIGURE = {"png": "image/png", "svg": "image/svg+xml"}
+
+
+def figure_en_octets(fig, fmt="png", dpi=150):
+    """
+    Copie prête à imprimer (cf. make_print_ready), rendue en PNG ou en SVG.
+    Le SVG est vectoriel : il s'agrandit sans perte dans Word ou un logiciel
+    de dessin. Le texte y est converti en tracés (réglage par défaut de
+    matplotlib) : il ne dépend donc pas des polices du poste qui l'ouvre, et
+    la mise en page vérifiée ici est exactement celle qu'on obtient.
+    """
+    import io as _io
+    if fmt not in FORMATS_FIGURE:
+        raise ValueError(f"Format de figure non pris en charge : {fmt!r} "
+                         f"(attendu : {', '.join(FORMATS_FIGURE)})")
+    buf = _io.BytesIO()
+    make_print_ready(fig).savefig(buf, format=fmt, dpi=dpi, bbox_inches="tight")
+    return buf.getvalue()
+
+
+def figures_de_resultats(res):
+    """Liste ordonnée (nom de fichier sans extension, figure) de toutes les
+    figures d'une analyse, volet climatique compris — pour l'export groupé."""
+    out = []
+    for i, (cle, fig) in enumerate(res.figures.items(), start=1):
+        if fig is not None:
+            out.append((f"{i:02d}_{cle}", fig))
+    for j, fig in enumerate(res.figures_climatiques or [], start=1):
+        if fig is not None:
+            out.append((f"clim_{j:02d}", fig))
+    return out

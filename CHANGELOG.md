@@ -1,5 +1,37 @@
 # Journal des versions
 
+## 4.8 — 2026-11-09
+- **Aucun calcul modifié.** Seules les figures et leur export changent.
+- **Plus de chevauchements dans les livrables.** L'export relève les polices
+  pour l'impression (≥ 8 pt à 16 cm de large) sur une copie de la figure,
+  mais la mise en page restait celle calculée pour les petites polices
+  d'écran : légendes, titres et étiquettes se chevauchaient dans le rapport
+  Word et les PNG. Le moteur de mise en page est désormais attaché à chaque
+  figure et rejoué après le relèvement (`print_style.mise_en_page`).
+- **Légendes sous les graphiques** (chronique, vulnérabilité, fraie,
+  contrôle qualité, régimes de débit) : légendes de figure placées par la
+  mise en page, et non plus à une distance fixe de l'axe qui recouvrait
+  l'étiquette « Date ». Contrôle qualité : la légende ne masque plus les
+  points écartés.
+- **Retouches ciblées.** Sensibilité : les statistiques rejoignent la
+  légende au lieu d'un encadré posé sur le nuage de points. Indicateurs
+  mensuels : panneaux superposés, les douze mois restent lisibles. Fraie :
+  titre sur deux lignes, repères de phase dans le cadre. Tableaux : libellés
+  de section écrits sur toute la largeur (« VULNÉRABILITÉ ESTIVALE · … »
+  n'est plus tronqué). Débits : verdict de rupture et avertissement « volet
+  stress non retenu » intégrés aux légendes qu'ils chevauchaient. Volet
+  climatique : bande libre réservée à la légende au-dessus des barres.
+- **Titre des figures** : « cours d'eau · point » quand le point est
+  renseigné — en multi-sondes, les figures de deux sondes d'un même cours
+  d'eau étaient indiscernables.
+- **Export SVG.** Chaque figure se télécharge en PNG et en SVG ; toutes les
+  figures d'une sonde en un ZIP de SVG ; le ZIP multi-sondes contient un
+  dossier `figures/` par sonde. Texte vectorisé : rendu identique quel que
+  soit le poste.
+- `matplotlib>=3.7` (légendes de figure « outside »).
+- Tests : `tests/test_figures_export.py`, dont un témoin qui reproduit le
+  chevauchement de la 4.7 et vérifie qu'il a disparu.
+
 ## 4.7 — 2026-11-08
 - **Aucun calcul modifié.** Les changements portent sur la lecture des
   fichiers et sur l'interface ; sur une même entrée lue de la même façon,
